@@ -2,3 +2,5 @@ build/
 dist/
 env/
 fastmc.egg-info/
+setup.cfg
+*/*.pyc
