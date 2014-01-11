@@ -9,4 +9,5 @@ setup(
     packages = ['fastmc'],
     license = 'BSD2',
     install_requires = ['requests', 'pycrypto', 'simplejson'],
+    zip_safe = True,
 )
