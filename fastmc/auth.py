@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+#
 # Copyright (c) 2014, Florian Wesch <fw@dividuum.de>
 # All rights reserved.
 # 
