@@ -1162,9 +1162,9 @@ protocol(0).state(PLAY).from_server(0x2b, "ChangeGameState", """
 protocol(0).state(PLAY).from_server(0x2c, "SpawnGlobalEntity", """
     eid             varint
     type            byte
-    x               int
-    y               int
-    z               int
+    x               int32
+    y               int32
+    z               int32
 """)
 protocol(0).state(PLAY).from_server(0x2d, "OpenWindow", """
     window_id       ubyte
@@ -1383,7 +1383,7 @@ protocol(0).state(PLAY).from_client(0x15, "ClientSettings", """
     locale          string
     view_distance   byte
     chat_flags      byte
-    unused          bool
+    chat_colors     bool
     difficulty      byte
     show_cape       bool
 """)
@@ -1410,4 +1410,45 @@ protocol(4).state(PLAY).from_server(0x22, "MultiBlockChange", """
     chunk_x         int
     chunk_z         int
     changes         changes
+""")
+
+protocol(5).set_name("14w02a")
+protocol(5).based_on(4)
+protocol(5).state(PLAY).from_server(0x02, "ChatMesage", """
+    chat            json
+    position        byte
+""")
+protocol(5).state(PLAY).from_server(0x08, "PlayerPositionAndLook", """
+    x               double
+    y               double
+    z               double
+    yaw             float
+    pitch           float
+    flag            byte
+""")
+protocol(5).state(PLAY).from_server(0x2d, "OpenWindow", """
+    window_id       ubyte
+    type            string
+    title           string
+    slot_count      ubyte
+    use_title       bool
+    eid             int                 self.type == 11
+""")
+protocol(5).state(PLAY).from_server(0x2d, "OpenWindow", """
+    window_id       ubyte
+    type            string
+    title           string
+    slot_count      ubyte
+    use_title       bool
+    eid             int                 self.type == 11
+""")
+protocol(5).state(PLAY).from_server(0x41, "ServerDifficulty", """
+    difficulty      ubyte
+""")
+protocol(5).state(PLAY).from_client(0x15, "ClientSettings", """
+    locale          string
+    view_distance   byte
+    chat_flags      byte
+    chat_colors     bool
+    show_cape       bool
 """)
