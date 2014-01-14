@@ -26,6 +26,8 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import fastmc.auth
+import fastmc.util
+
 from fastmc.proto import (
     ReadBuffer,
     WriteBuffer,

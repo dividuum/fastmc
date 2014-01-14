@@ -33,7 +33,7 @@ from collections import namedtuple
 
 MC_FORMAT_PATTERN = re.compile(ur"§(.)")
 
-MinecraftFormat = namedtuple("MinecraftFormat", "rgb bold strikethrough underline italic obfuscated")
+MinecraftFormat = namedtuple("MinecraftFormat", "rgb bold strikethrough underline italic obfuscated url")
 
 CHAT_COLORS = [
     ('black',        '0', (0  ,0  ,0  )),
@@ -57,16 +57,16 @@ CHAT_COLORS = [
 COLOR_CODES = dict((code, rgb) for _, code, rgb in CHAT_COLORS)
 COLOR_NAMES = dict((name, rgb) for name, _, rgb in CHAT_COLORS)
 
-DEFAULT_COLOR = 'black'
+DEFAULT_COLOR = 'white'
 DEFAULT_RGB = COLOR_NAMES[DEFAULT_COLOR]
 
 def parse_minecraft_legacy(string, rgb=DEFAULT_RGB, bold=False, 
-        strikethrough=False, underline=False, italic=False, obfuscated=False):
+        strikethrough=False, underline=False, italic=False, obfuscated=False, url=None):
 
     components = []
     start = 0
 
-    text_format = MinecraftFormat(rgb, bold, strikethrough, underline, italic, obfuscated) 
+    text_format = MinecraftFormat(rgb, bold, strikethrough, underline, italic, obfuscated, url) 
     for fmt in MC_FORMAT_PATTERN.finditer(string):
         end = fmt.start()
         text = string[start:end]
@@ -97,7 +97,7 @@ def parse_minecraft_legacy(string, rgb=DEFAULT_RGB, bold=False,
 
         if text:
             components.append((text, text_format))
-        text_format = MinecraftFormat(rgb, bold, strikethrough, underline, italic, obfuscated) 
+        text_format = MinecraftFormat(rgb, bold, strikethrough, underline, italic, obfuscated, url) 
         start = fmt.end()
 
     rest = string[start:]
@@ -109,6 +109,14 @@ def parse_minecraft_legacy(string, rgb=DEFAULT_RGB, bold=False,
 def decode_component(comp):
     components = []
     def recursive_parse(comp):
+        def get_url(comp):
+            ce = comp.get('clickEvent')
+            if not ce:
+                return None
+            if ce.get('action') != 'open_url':
+                return None
+            return ce.get('value')
+
         if isinstance(comp, unicode):
             components.extend(parse_minecraft_legacy(comp))
         elif isinstance(comp, str):
@@ -122,6 +130,7 @@ def decode_component(comp):
                 underline = comp.get('underline', False),
                 strikethrough = comp.get('strikethrough', False),
                 obfuscated = comp.get('obfuscated', False),
+                url = get_url(comp),
             ))
             for extra in comp.get('extra', ()):
                 recursive_parse(extra)
@@ -135,12 +144,7 @@ class MCString(object):
     def __init__(self, string):
         self._components = decode_component(string)
 
-    @property
-    def components(self):
-        return self._components
-
-    @property
-    def html(self):
+    def to_html(self, allow_links=False):
         def to_style(fmt):
             styles = []
             styles.append('color:#%02x%02x%02x;' % fmt.rgb)
@@ -154,8 +158,14 @@ class MCString(object):
                 styles.append('font-style:italic;')
             return ''.join(styles)
 
-        return ''.join("<span style='%s'>%s</span>" % (
-            to_style(fmt), escape(text)
+        def fmt_line(fmt, line):
+            if fmt.url and allow_links:
+                return '<a class="chat-link" href="%s" style="%s">%s</a>' % (escape(fmt.url, quote=True), to_style(fmt), line)
+            else:
+                return "<span style='%s'>%s</span>" % (to_style(fmt), line)
+
+        return ''.join((
+            '<br/>'.join(fmt_line(fmt, line) for line in text.split('\n'))
         ) for text, fmt in self._components)
 
     @property
@@ -166,16 +176,19 @@ def strip_text(string):
     return MCString(string).stripped
 
 def text_to_html(string, allow_links=False):
-    return MCString(string).html
+    return MCString(string).to_html(allow_links)
 
 if __name__ == "__main__":
     def test(string):
         s = MCString(string)
-        for comp in s.components:
-            print comp
         print repr(s.stripped)
-        print repr(s.html)
+        print s._components
+        print repr(s.to_html(False))
+        print repr(s.to_html(True))
+        print
 
     test(u"lol")
+    test(u"1\n2")
     test(u"lo§4l")
     test({'text': u'lo\xffl', 'extra':[{'text': u'xx§rx', 'color': 'red', 'strikethrough': True}]})
+    test({'text': 'click me', 'clickEvent': {'action': 'open_url', 'value': 'http://example.net'}})
