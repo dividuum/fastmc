@@ -30,10 +30,11 @@
 import re
 from cgi import escape
 from collections import namedtuple
+from itertools import count
 
 MC_FORMAT_PATTERN = re.compile(ur"§(.)")
 
-MinecraftFormat = namedtuple("MinecraftFormat", "rgb bold strikethrough underline italic obfuscated url")
+MinecraftChatStyle = namedtuple("MinecraftChatStyle", "rgb bold strikethrough underline italic obfuscated url")
 
 CHAT_COLORS = [
     ('black',        '0', (0  ,0  ,0  )),
@@ -53,62 +54,99 @@ CHAT_COLORS = [
     ('yellow',       'e', (255,255,85 )),
     ('white',        'f', (255,255,255)),
 ]
-
 COLOR_CODES = dict((code, rgb) for _, code, rgb in CHAT_COLORS)
 COLOR_NAMES = dict((name, rgb) for name, _, rgb in CHAT_COLORS)
 
 DEFAULT_COLOR = 'white'
 DEFAULT_RGB = COLOR_NAMES[DEFAULT_COLOR]
 
-def parse_minecraft_legacy(string, rgb=DEFAULT_RGB, bold=False, 
-        strikethrough=False, underline=False, italic=False, obfuscated=False, url=None):
+DEFAULT_STYLE = MinecraftChatStyle(
+    rgb = COLOR_NAMES[DEFAULT_COLOR],
+    bold = False,
+    strikethrough = False,
+    underline = False,
+    italic = False,
+    obfuscated = False,
+    url = None
+)
 
-    components = []
+
+def parse_minecraft_legacy(string, style=DEFAULT_STYLE):
+    out = []
     start = 0
-
-    text_format = MinecraftFormat(rgb, bold, strikethrough, underline, italic, obfuscated, url) 
-    for fmt in MC_FORMAT_PATTERN.finditer(string):
-        end = fmt.start()
+    for m in MC_FORMAT_PATTERN.finditer(string):
+        end = m.start()
         text = string[start:end]
-        code = fmt.group(1)
-        if code in COLOR_CODES:
-            rgb = COLOR_CODES[code]
-            bold = False
-            strikethrough = False
-            underline = False
-            italic = False
-        elif code == 'l':
-            bold = True
-        elif code == 'm':
-            strikethrough = True
-        elif code == 'n':
-            underline = True
-        elif code == 'o':
-            italic = True
-        elif code == 'k':
-            obfuscated = True
-        elif code == 'r':
-            rgb = DEFAULT_RGB
-            bold = False
-            strikethrough = False
-            underline = False
-            italic = False
-            obfuscated = False
-
         if text:
-            components.append((text, text_format))
-        text_format = MinecraftFormat(rgb, bold, strikethrough, underline, italic, obfuscated, url) 
-        start = fmt.end()
+            out.append((text, style))
+        code = m.group(1)
+        if code in COLOR_CODES:
+            style = style._replace(
+                rgb = COLOR_CODES[code],
+                bold = False,
+                strikethrough = False,
+                underline = False,
+                italic = False,
+            )
+        elif code == 'l':
+            style = style._replace(bold = True)
+        elif code == 'm':
+            style = style._replace(strikethrough = True)
+        elif code == 'n':
+            style = style._replace(underline = True)
+        elif code == 'o':
+            style = style._replace(italic = True)
+        elif code == 'k':
+            style = style._replace(obfuscated = True)
+        elif code == 'r':
+            style = DEFAULT_STYLE # XXX: Maybe keep url?
+        start = m.end()
 
     rest = string[start:]
     if rest:
-        components.append((rest, text_format))
+        out.append((rest, style))
+    return out
 
-    return components
 
-def decode_component(comp):
-    components = []
-    def recursive_parse(comp):
+TRANSLATION_PATTERN = re.compile("%(?:([0-9]+)\$)?([ds%])")
+
+class Translation(object):
+    def __init__(self, stream):
+        self._translations = {}
+        for line in stream:
+            line = line.strip()
+            if not line:
+                continue
+            key, value = line.split('=', 1)
+            next_pos = count(1).next
+            chunks = []
+            start = 0
+            for m in TRANSLATION_PATTERN.finditer(value):
+                end = m.start()
+                if end > start:
+                    chunks.append(value[start:end])
+                pos, fmt = m.groups()
+                if pos is None:
+                    pos = next_pos()
+                else:
+                    pos = int(pos)
+                if fmt == '%':
+                    chunks.append('%')
+                else:
+                    chunks.append(pos)
+                start = m.end()
+            rest = value[start:]
+            if rest:
+                chunks.append(rest)
+            self._translations[key] = chunks
+    def __getitem__(self, key):
+        if not key in self._translations:
+            return ['<missing translation: %s>' % key]
+        return self._translations[key]
+
+def decode_component(comp, translation):
+    def recursive_parse(comp, style):
+        out = []
         def get_url(comp):
             ce = comp.get('clickEvent')
             if not ce:
@@ -118,55 +156,77 @@ def decode_component(comp):
             return ce.get('value')
 
         if isinstance(comp, unicode):
-            components.extend(parse_minecraft_legacy(comp))
+            out.extend(parse_minecraft_legacy(comp, style))
         elif isinstance(comp, str):
-            components.extend(parse_minecraft_legacy(comp.decode('utf8', 'replace')))
+            out.extend(parse_minecraft_legacy(comp.decode('utf8', 'replace'), style))
         elif isinstance(comp, dict):
-            components.extend(parse_minecraft_legacy(
-                string = comp['text'],
-                rgb = COLOR_NAMES.get(comp.get('color', DEFAULT_COLOR), DEFAULT_RGB),
-                bold = comp.get('bold', False),
-                italic = comp.get('italic', False),
-                underline = comp.get('underline', False),
-                strikethrough = comp.get('strikethrough', False),
-                obfuscated = comp.get('obfuscated', False),
-                url = get_url(comp),
-            ))
+            if 'color' in comp:
+                style = style._replace(rgb = COLOR_NAMES.get(comp['color'], DEFAULT_RGB))
+            if 'bold' in comp:
+                style = style._replace(bold = comp['bold'])
+            if 'italic' in comp:
+                style = style._replace(italic = comp['italic'])
+            if 'underline' in comp:
+                style = style._replace(underline = comp['underline'])
+            if 'strikethrough' in comp:
+                style = style._replace(strikethrough = comp['strikethrough'])
+            if 'obfuscated' in comp:
+                style = style._replace(obfuscated = comp['obfuscated'])
+            maybe_url = get_url(comp)
+            if maybe_url:
+                style = style._replace(url = maybe_url)
+
+            if 'text' in comp:
+                out.extend(parse_minecraft_legacy(comp['text'], style))
+            elif 'translate' in comp:
+                args = [()]
+                args.extend(recursive_parse(c, style) for c in comp.get('with', ()))
+                if not translation:
+                    out.append(recursive_parse("<no translation: %s>" % comp['translate'], style))
+                else:
+                    chunks = translation[comp['translate']]
+                    for chunk in chunks:
+                        if isinstance(chunk, int):
+                            if 0 < chunk < len(args):
+                                out.extend(args[chunk])
+                        else:
+                            out.extend(recursive_parse(chunk, style))
             for extra in comp.get('extra', ()):
-                recursive_parse(extra)
+                out.extend(recursive_parse(extra, style._replace(url=None)))
         else:
             # invalid data type for component. ignore?
             pass
-    recursive_parse(comp)
-    return components
+        return out
+
+    return recursive_parse(comp, style=DEFAULT_STYLE)
 
 class MCString(object):
-    def __init__(self, string):
-        self._components = decode_component(string)
+    def __init__(self, string, translation=None):
+        self._components = decode_component(string, translation)
 
     def to_html(self, allow_links=False):
-        def to_style(fmt):
+        def to_style(style):
             styles = []
-            styles.append('color:#%02x%02x%02x;' % fmt.rgb)
-            if fmt.underline:
+            styles.append('color:#%02x%02x%02x;' % style.rgb)
+            if style.underline:
                 styles.append('text-decoration:underline;')
-            if fmt.strikethrough:
+            if style.strikethrough:
                 styles.append('text-decoration:line-through;')
-            if fmt.bold:
+            if style.bold:
                 styles.append('font-weight:bold;')
-            if fmt.italic:
+            if style.italic:
                 styles.append('font-style:italic;')
             return ''.join(styles)
 
-        def fmt_line(fmt, line):
-            if fmt.url and allow_links:
-                return '<a class="chat-link" href="%s" style="%s">%s</a>' % (escape(fmt.url, quote=True), to_style(fmt), line)
+        def fmt_line(style, line):
+            if style.url and allow_links:
+                return '<a class="chat-link" href="%s" style="%s">%s</a>' % (escape(style.url, quote=True), to_style(style), line)
             else:
-                return "<span style='%s'>%s</span>" % (to_style(fmt), line)
+                return "<span style='%s'>%s</span>" % (to_style(style), line)
 
         return ''.join((
-            '<br/>'.join(fmt_line(fmt, line) for line in text.split('\n'))
-        ) for text, fmt in self._components)
+            '<br/>'.join(fmt_line(style, line) for line in text.split('\n'))
+        ) for text, style in self._components)
 
     @property
     def stripped(self):
@@ -191,4 +251,5 @@ if __name__ == "__main__":
     test(u"1\n2")
     test(u"lo§4l")
     test({'text': u'lo\xffl', 'extra':[{'text': u'xx§rx', 'color': 'red', 'strikethrough': True}]})
+    test({'text': 'click me', 'clickEvent': {'action': 'open_url', 'value': 'http://example.net'}})
     test({'text': 'click me', 'clickEvent': {'action': 'open_url', 'value': 'http://example.net'}})
