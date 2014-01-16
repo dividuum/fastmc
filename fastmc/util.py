@@ -70,15 +70,16 @@ DEFAULT_STYLE = MinecraftChatStyle(
     url = None
 )
 
-
 def parse_minecraft_legacy(string, style=DEFAULT_STYLE):
     out = []
     start = 0
+
     for m in MC_FORMAT_PATTERN.finditer(string):
         end = m.start()
         text = string[start:end]
         if text:
             out.append((text, style))
+
         code = m.group(1)
         if code in COLOR_CODES:
             style = style._replace(
@@ -182,7 +183,7 @@ def decode_component(comp, translation):
                 args = [()]
                 args.extend(recursive_parse(c, style) for c in comp.get('with', ()))
                 if not translation:
-                    out.append(recursive_parse("<no translation: %s>" % comp['translate'], style))
+                    out.extend(recursive_parse("<no translation: %s>" % comp['translate'], style))
                 else:
                     chunks = translation[comp['translate']]
                     for chunk in chunks:
@@ -225,12 +226,12 @@ class MCString(object):
                 return "<span style='%s'>%s</span>" % (to_style(style), line)
 
         return ''.join((
-            '<br/>'.join(fmt_line(style, line) for line in text.split('\n'))
+            '<br/>'.join(fmt_line(style, escape(line)) for line in text.split('\n'))
         ) for text, style in self._components)
 
     @property
     def stripped(self):
-        return ''.join(text for text, color in self._components)
+        return ''.join(text for text, style in self._components)
 
 def strip_text(string):
     return MCString(string).stripped
