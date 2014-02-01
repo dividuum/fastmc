@@ -123,6 +123,18 @@ def size_varint(value):
         value >>= 7
     return size
 
+Position = namedtuple("Position", "x y z")
+
+def read_position(b):
+    x = read_int(b)
+    y = read_ubyte(b)
+    z = read_int(b)
+    return Position(x, y, z)
+def write_position(b, pos):
+    write_int(b, pos.x)
+    write_ubyte(b, pos.y)
+    write_int(b, pos.z)
+
 def read_string(b):
     size = read_varint(b)
     string = b.read(size)
@@ -1453,4 +1465,78 @@ protocol(5).state(PLAY).from_client(0x15, "ClientSettings", """
     chat_flags      byte
     chat_colors     bool
     show_cape       bool
+""")
+
+protocol(6).set_name("14w03a")
+protocol(6).based_on(5)
+protocol(6).state(PLAY).from_server(0x05, "SpawnPosition", """
+    location        position
+""")
+protocol(6).state(PLAY).from_server(0x0a, "UseBed", """
+    eid             int
+    location        position
+""")
+protocol(6).state(PLAY).from_server(0x23, "BlockChange", """
+    location        position
+    block_type      varint
+    block_data      ubyte
+""")
+protocol(6).state(PLAY).from_server(0x24, "BlockAction", """
+    location        position
+    b1              ubyte
+    b2              ubyte
+    block_type      varint
+""")
+protocol(6).state(PLAY).from_server(0x25, "BlockBreakAnimation", """
+    eid             varint
+    location        position
+    destroy_stage   byte
+""")
+protocol(6).state(PLAY).from_server(0x28, "Effect", """
+    effect_id       int
+    location        position
+    data            int
+    constant_volume bool
+""")
+protocol(6).state(PLAY).from_server(0x33, "UpdateSign", """
+    location        position
+    line1           string
+    line2           string
+    line3           string
+    line4           string
+""")
+protocol(6).state(PLAY).from_server(0x35, "UpdateBlockEntity", """
+    location        position
+    action          ubyte
+    nbt             short_byte_array
+""")
+protocol(6).state(PLAY).from_server(0x36, "SignEditorOpen", """
+    location        position
+""")
+protocol(6).state(PLAY).from_client(0x07, "PlayerDigging", """
+    status          byte
+    location        position
+    face            byte
+""")
+protocol(6).state(PLAY).from_client(0x08, "BlockPlacement", """
+    location        position
+    direction       byte
+    held_item       slot
+    cursor_x        byte
+    cursor_y        byte
+    cursor_z        byte
+""")
+protocol(6).state(PLAY).from_client(0x12, "UpdateSign", """
+    location        position
+    line1           string
+    line2           string
+    line3           string
+    line4           string
+""")
+protocol(6).state(PLAY).from_client(0x15, "ClientSettings", """
+    locale          string
+    view_distance   byte
+    chat_flags      byte
+    chat_colors     bool
+    displayed_skin  ubyte
 """)
