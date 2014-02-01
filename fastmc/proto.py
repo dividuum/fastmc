@@ -135,6 +135,12 @@ def write_position(b, pos):
     write_ubyte(b, pos.y)
     write_int(b, pos.z)
 
+def read_position_packed(b):
+    p = read_long(b)
+    return Position(p >> 38, (p >> 26) & 0xfff, p & 0x3ffffff)
+def write_position_packed(b, pos):
+    write_long(b, p.x << 38 | p.y << 26 | p.z)
+
 def read_string(b):
     size = read_varint(b)
     string = b.read(size)
@@ -207,17 +213,17 @@ def write_uint(b, value):
 def read_int8(b):
     return read_int(b) / 8.0
 def write_int8(b, value):
-    write_int(int(value * 8))
+    write_int(b, int(value * 8))
 
 def read_int32(b):
     return read_int(b) / 32.0
 def write_int32(b, value):
-    write_int(int(value * 32))
+    write_int(b, int(value * 32))
 
 def read_byte32(b):
     return read_byte(b) / 32.0
 def write_byte32(b, value):
-    write_byte(int(value * 32))
+    write_byte(b, int(value * 32))
 
 def read_short_byte_array(b):
     size = read_short(b)
@@ -233,6 +239,18 @@ def write_int_byte_array(b, value):
     write_int(b, len(value))
     b.write(value)
 
+PlayerData = namedtuple("PlayerData", "name value signature")
+def read_player_data(b):
+    return PlayerData(
+        read_string(b),
+        read_string(b),
+        read_string(b),
+    )
+def write_player_data(b, pd):
+    write_string(b, pd.name)
+    write_string(b, pd.value)
+    write_string(b, pd.signature)
+
 def make_array_reader(count_reader, record_reader):
     def reader(b):
         size = count_reader(b)
@@ -246,6 +264,8 @@ def make_array_writer(count_writer, record_writer):
     return writer
 read_byte_int_array = make_array_reader(read_byte, read_int)
 write_byte_int_array = make_array_writer(write_byte, write_int)
+read_varint_varint_array = make_array_reader(read_varint, read_varint)
+write_varint_varint_array = make_array_writer(write_varint, write_varint)
 read_short_int_array = make_array_reader(read_short, read_int)
 write_short_int_array = make_array_writer(write_short, write_int)
 read_int_string_array = make_array_reader(read_int, read_string)
@@ -254,6 +274,8 @@ read_short_string_array = make_array_reader(read_short, read_string)
 write_short_string_array = make_array_writer(write_short, write_string)
 read_varint_string_array = make_array_reader(read_varint, read_string)
 write_varint_string_array = make_array_writer(write_varint, write_string)
+read_varint_player_data_array = make_array_reader(read_varint, read_player_data)
+write_varint_player_data_array = make_array_writer(write_varint, write_player_data)
 
 Slot = namedtuple("Slot", "item_id count damage nbt")
 def read_slot_array(b):
@@ -376,6 +398,33 @@ def write_property_array(b, properties):
     for key, property in properties.iteritems():
         write_string(b, key)
         b.write(pack(">dh", property.value, len(property.modifiers)))
+        for modifier in property.modifiers:
+            b.write(pack(">QQdb", 
+                modifier.uuid >> 64,
+                modifier.uuid & 0xffffffffffffffff,
+                modifier.amount,
+                modifier.operation
+            ))
+
+def read_property_array_14w04a(b):
+    properties = {}
+    num_properties = read_int(b)
+    for _ in xrange(num_properties):
+        key = read_string(b)
+        value = read_double(b)
+        num_modifiers = read_varint(b)
+        modifiers = []
+        for _ in xrange(num_modifiers):
+            msl, lsl, amount, operation = unpack(">QQdb", b.read(25))
+            modifiers.append(Modifier(msl << 64 | lsl, amount, operation))
+        properties[key] = Property(value, modifiers)
+    return properties
+def write_property_array_14w04a(b, properties):
+    write_int(b, len(properties))
+    for key, property in properties.iteritems():
+        write_string(b, key)
+        write_double(b, property.value)
+        write_varint(b, len(property.modifiers))
         for modifier in property.modifiers:
             b.write(pack(">QQdb", 
                 modifier.uuid >> 64,
@@ -1539,4 +1588,209 @@ protocol(6).state(PLAY).from_client(0x15, "ClientSettings", """
     chat_flags      byte
     chat_colors     bool
     displayed_skin  ubyte
+""")
+
+protocol(7).set_name("14w04a")
+protocol(7).based_on(6)
+protocol(7).state(PLAY).from_server(0x04, "EntityEquipment", """
+    eid             varint
+    slot            short
+    item            slot
+""")
+protocol(6).state(PLAY).from_server(0x05, "SpawnPosition", """
+    location        position_packed
+""")
+protocol(7).state(PLAY).from_server(0x06, "HealthUpdate", """
+    health          float
+    food            varint
+    food_saturation float
+""")
+protocol(7).state(PLAY).from_server(0x0a, "UseBed", """
+    eid             varint
+    location        position_packed
+""")
+protocol(7).state(PLAY).from_server(0x0c, "SpawnPlayer", """
+    eid             varint
+    uuid            string
+    name            string
+    data            varint_player_data_array
+    x               int32
+    y               int32
+    z               int32
+    yaw             ubyte
+    pitch           ubyte
+    current_item    short
+    metadata        metadata
+""")
+protocol(7).state(PLAY).from_server(0x0d, "CollectItem", """
+    collected_eid   varint
+    collector_eid   varint
+""")
+protocol(7).state(PLAY).from_server(0x12, "EntityVelocity", """
+    eid             varint
+    velocity_x      short
+    velocity_y      short
+    velocity_z      short
+""")
+protocol(7).state(PLAY).from_server(0x13, "DestroyEntities", """
+    eids            varint_varint_array
+""")
+protocol(7).state(PLAY).from_server(0x14, "Entity", """
+    eid             varint
+""")
+protocol(7).state(PLAY).from_server(0x18, "EntityTeleport", """
+    eid             varint
+    x               int32
+    y               int32
+    z               int32
+    yaw             ubyte
+    pitch           ubyte
+""")
+protocol(7).state(PLAY).from_server(0x19, "EntityHeadLook", """
+    eid             varint
+    head_yaw        ubyte
+""")
+protocol(7).state(PLAY).from_server(0x1c, "EntityMetadata", """
+    eid             varint
+    metadata        metadata
+""")
+protocol(7).state(PLAY).from_server(0x1e, "RemoveEntityEffect", """
+    eid             varint
+    effect_id       byte
+""")
+protocol(7).state(PLAY).from_server(0x1f, "SetExperience", """
+    bar             float
+    level           varint
+    total_exp       varint
+""")
+protocol(7).state(PLAY).from_server(0x20, "EntityProperty", """
+    eid             varint
+    properties      property_array_14w04a
+""")
+protocol(7).state(PLAY).from_server(0x23, "BlockChange", """
+    location        position_packed
+    block_type      varint
+    block_data      ubyte
+""")
+protocol(7).state(PLAY).from_server(0x24, "BlockAction", """
+    location        position_packed
+    b1              ubyte
+    b2              ubyte
+    block_type      varint
+""")
+protocol(7).state(PLAY).from_server(0x25, "BlockBreakAnimation", """
+    eid             varint
+    location        position_packed
+    destroy_stage   byte
+""")
+protocol(7).state(PLAY).from_server(0x28, "Effect", """
+    effect_id       int
+    location        position_packed
+    data            int
+    constant_volume bool
+""")
+protocol(7).state(PLAY).from_server(0x33, "UpdateSign", """
+    location        position_packed
+    line1           string
+    line2           string
+    line3           string
+    line4           string
+""")
+protocol(7).state(PLAY).from_server(0x35, "UpdateBlockEntity", """
+    location        position_packed
+    action          ubyte
+    nbt             short_byte_array
+""")
+protocol(7).state(PLAY).from_server(0x36, "SignEditorOpen", """
+    location        position_packed
+""")
+protocol(7).state(PLAY).from_client(0x07, "PlayerDigging", """
+    status          byte
+    location        position_packed
+    face            byte
+""")
+protocol(7).state(PLAY).from_server(0x38, "PlayerListItem", """
+    name            string
+    online          bool
+    ping            varint
+""")
+protocol(7).state(PLAY).from_server(0x3c, "UpdateScore", """
+    name            string
+    remove          byte
+    score_name      string              self.remove != 1
+    value           varint              self.remove != 1
+""")
+protocol(7).state(PLAY).from_server(0x3e, "Teams", """
+    team_name       string
+    mode            byte
+    display_name    string              self.mode == 0 or self.mode == 2
+    prefix          string              self.mode == 0 or self.mode == 2
+    suffix          string              self.mode == 0 or self.mode == 2
+    friendly_fire   byte                self.mode == 0 or self.mode == 2
+    players         varint_string_array self.mode in (0, 3, 4)
+""")
+protocol(7).state(PLAY).from_server(0x42, "CombatEvent", """
+    event           ubyte
+    duration        varint              self.event == 1
+    end_eid         int                 self.event == 1
+    player_id       varint              self.event == 2
+    dead_eid        int                 self.event == 2
+    message         string              self.event == 2
+""")
+protocol(7).state(PLAY).from_server(0x00, "KeepAlive", """
+    keepalive_id    varint 
+""")
+protocol(7).state(PLAY).from_client(0x02, "UseEntity", """
+    target          varint
+    button          ubyte
+""")
+protocol(7).state(PLAY).from_client(0x07, "PlayerDigging", """
+    status          byte
+    location        position_packed
+    face            byte
+""")
+protocol(7).state(PLAY).from_client(0x08, "BlockPlacement", """
+    location        position_packed
+    direction       byte
+    held_item       slot
+    cursor_x        byte
+    cursor_y        byte
+    cursor_z        byte
+""")
+protocol(7).state(PLAY).from_client(0x0a, "Animation", """
+""")
+protocol(7).state(PLAY).from_client(0x0b, "EntityAction", """
+    eid             varint
+    action_id       ubyte
+    jump_boost      varint
+""")
+protocol(7).state(PLAY).from_client(0x0c, "SteerVehicle", """
+    sideways        float
+    forward         float
+    flags           ubyte
+""")
+protocol(7).state(PLAY).from_client(0x12, "UpdateSign", """
+    location        position_packed
+    line1           string
+    line2           string
+    line3           string
+    line4           string
+""")
+protocol(7).state(PLAY).from_client(0x16, "ClientStatus", """
+    action_id       ubyte
+""")
+
+protocol(8).set_name("14w04b")
+protocol(8).based_on(7)
+protocol(8).state(PLAY).from_server(0x10, "SpawnPainting", """
+    eid             varint
+    title           string
+    location        position_packed
+    direction       ubyte
+""")
+
+protocol(9).set_name("14w05a")
+protocol(9).based_on(8)
+protocol(9).state(PLAY).from_server(0x43, "Camera", """
+    camera_id       varint
 """)
