@@ -139,7 +139,7 @@ def read_position_packed(b):
     p = read_long(b)
     return Position(p >> 38, (p >> 26) & 0xfff, p & 0x3ffffff)
 def write_position_packed(b, pos):
-    write_long(b, p.x << 38 | p.y << 26 | p.z)
+    write_long(b, pos.x << 38 | pos.y << 26 | pos.z)
 
 def read_string(b):
     size = read_varint(b)
@@ -690,7 +690,8 @@ def make_packet_type(pkt_id, pkt_name, desc):
     code.add("out = []")
     code.add("out.append('%s (0x%02x)')" % (pkt_name, pkt_id))
     for name, parser, condition in fields:
-        code.add("out.append('  %s (%s)')" % (name, parser))
+        code.add("out.append('  %s (%s%s)')" % (name, parser, 
+            " if %s" % condition if condition else ""))
     code.add("return '\\n'.join(out)")
     code.dedent()
 
@@ -1492,18 +1493,9 @@ protocol(5).state(PLAY).from_server(0x08, "PlayerPositionAndLook", """
 protocol(5).state(PLAY).from_server(0x2d, "OpenWindow", """
     window_id       ubyte
     type            string
-    title           string
+    title           json
     slot_count      ubyte
-    use_title       bool
-    eid             int                 self.type == 11
-""")
-protocol(5).state(PLAY).from_server(0x2d, "OpenWindow", """
-    window_id       ubyte
-    type            string
-    title           string
-    slot_count      ubyte
-    use_title       bool
-    eid             int                 self.type == 11
+    eid             int                 self.type == "EntityHorse"
 """)
 protocol(5).state(PLAY).from_server(0x41, "ServerDifficulty", """
     difficulty      ubyte
@@ -1597,7 +1589,7 @@ protocol(7).state(PLAY).from_server(0x04, "EntityEquipment", """
     slot            short
     item            slot
 """)
-protocol(6).state(PLAY).from_server(0x05, "SpawnPosition", """
+protocol(7).state(PLAY).from_server(0x05, "SpawnPosition", """
     location        position_packed
 """)
 protocol(7).state(PLAY).from_server(0x06, "HealthUpdate", """
@@ -1638,6 +1630,25 @@ protocol(7).state(PLAY).from_server(0x13, "DestroyEntities", """
 protocol(7).state(PLAY).from_server(0x14, "Entity", """
     eid             varint
 """)
+protocol(7).state(PLAY).from_server(0x15, "EntityRelativeMove", """
+    eid             varint
+    dx              byte32
+    dy              byte32
+    dz              byte32
+""")
+protocol(7).state(PLAY).from_server(0x16, "EntityLook", """
+    eid             varint
+    yaw             ubyte
+    pitch           ubyte
+""")
+protocol(7).state(PLAY).from_server(0x17, "EntityLookAndRelativeMove", """
+    eid             varint
+    dx              byte32
+    dy              byte32
+    dz              byte32
+    yaw             ubyte
+    pitch           ubyte
+""")
 protocol(7).state(PLAY).from_server(0x18, "EntityTeleport", """
     eid             varint
     x               int32
@@ -1653,6 +1664,12 @@ protocol(7).state(PLAY).from_server(0x19, "EntityHeadLook", """
 protocol(7).state(PLAY).from_server(0x1c, "EntityMetadata", """
     eid             varint
     metadata        metadata
+""")
+protocol(7).state(PLAY).from_server(0x1d, "EntityEffect", """
+    eid             varint
+    effect_id       byte
+    amplifier       byte
+    duration        varint
 """)
 protocol(7).state(PLAY).from_server(0x1e, "RemoveEntityEffect", """
     eid             varint
@@ -1737,7 +1754,7 @@ protocol(7).state(PLAY).from_server(0x42, "CombatEvent", """
     dead_eid        int                 self.event == 2
     message         string              self.event == 2
 """)
-protocol(7).state(PLAY).from_server(0x00, "KeepAlive", """
+protocol(7).state(PLAY).from_client(0x00, "KeepAlive", """
     keepalive_id    varint 
 """)
 protocol(7).state(PLAY).from_client(0x02, "UseEntity", """
