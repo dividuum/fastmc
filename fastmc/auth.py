@@ -135,6 +135,14 @@ class Session(object):
             info['selectedProfile']['id']
         )
 
+    @classmethod
+    def from_authinfo(cls, access_token, player_ign, player_uuid):
+        return cls(
+            access_token,
+            player_ign,
+            player_uuid,
+        )
+
     def __init__(self, access_token, player_ign, uuid):
         self._access_token = access_token
         self._player_ign = player_ign
@@ -163,11 +171,11 @@ class Session(object):
         return "<Session: %s (%s) (accessToken: %s)>" % (
             self._player_ign, self._uuid, self._access_token)
 
-    # def validate(self):
-    #     r = requests.post(self.YGGDRASIL_BASE + "/validate", data=json_dumps({
-    #         'accessToken': self._access_token
-    #     }))
-    #     return r.status_code == 200
+    def validate(self):
+        r = requests.post(self.YGGDRASIL_BASE + "/validate", data=json_dumps({
+            'accessToken': self._access_token
+        }))
+        return r.status_code == 200
 
     def invalidate(self):
         r = requests.post(self.YGGDRASIL_BASE + "/invalidate", data=json_dumps({
