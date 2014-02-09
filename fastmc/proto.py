@@ -892,6 +892,9 @@ class MinecraftSocket(object):
         self._received += len(data)
         return data
 
+    def settimeout(self, timeout):
+        self._sock.settimeout(timeout)
+
     def close(self):
         self._sock.close()
 
