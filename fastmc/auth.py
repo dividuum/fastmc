@@ -215,7 +215,10 @@ def join_server(session, server_hash):
         'accessToken': session.access_token,
         'selectedProfile': session.uuid,
         'serverId': server_hash,
-    }))
+    }), headers = {
+        'Content-Type': 'application/json; charset=utf-8',
+        'User-Agent': None,
+    })
     return r.status_code == 200
 
 def check_player(player_ign, server_hash):
