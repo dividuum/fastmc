@@ -175,13 +175,13 @@ class Session(object):
         r = requests.post(self.YGGDRASIL_BASE + "/validate", data=json_dumps({
             'accessToken': self._access_token
         }))
-        return r.status_code == 200
+        return r.status_code in (200, 204)
 
     def invalidate(self):
         r = requests.post(self.YGGDRASIL_BASE + "/invalidate", data=json_dumps({
             'accessToken': self._access_token
         }))
-        return r.status_code == 200
+        return r.status_code in (200, 204)
 
     @classmethod
     def do_request(cls, endpoint, data):
@@ -216,10 +216,10 @@ def join_server(session, server_hash):
         'selectedProfile': session.uuid,
         'serverId': server_hash,
     }), headers = {
-        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Type': 'application/json', #; charset=utf-8',
         'User-Agent': None,
     })
-    return r.status_code == 200
+    return r.status_code in (200, 204)
 
 def check_player(player_ign, server_hash):
     r = requests.get('https://sessionserver.mojang.com/session/minecraft/hasJoined?username=%s&serverId=%s' % (
