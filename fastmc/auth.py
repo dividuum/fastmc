@@ -29,6 +29,7 @@
 
 import logging
 import hashlib
+from uuid import UUID
 from simplejson import dumps as json_dumps
 
 from Crypto.PublicKey import RSA
@@ -146,7 +147,7 @@ class Session(object):
     def __init__(self, access_token, player_ign, uuid):
         self._access_token = access_token
         self._player_ign = player_ign
-        self._uuid = uuid
+        self._uuid = UUID(uuid)
 
     def refresh(self):
         return Session(self._access_token)
@@ -157,7 +158,11 @@ class Session(object):
 
     @property
     def uuid(self):
-        return self._uuid
+        return str(self._uuid)
+
+    @property
+    def uuid_hex(self):
+        return self._uuid.hex
 
     @property
     def access_token(self):
@@ -165,7 +170,7 @@ class Session(object):
 
     @property
     def session_id(self):
-        return 'token:%s:%s' % (self._access_token, self._uuid)
+        return 'token:%s:%s' % (self._access_token, self.uuid_hex)
 
     def __str__(self):
         return "<Session: %s (%s) (accessToken: %s)>" % (
@@ -213,7 +218,7 @@ def make_server_hash(server_id, shared_secret, key):
 def join_server(session, server_hash):
     r = requests.post('https://sessionserver.mojang.com/session/minecraft/join', data=json_dumps({
         'accessToken': session.access_token,
-        'selectedProfile': session.uuid,
+        'selectedProfile': session.uuid_hex,
         'serverId': server_hash,
     }), headers = {
         'Content-Type': 'application/json', #; charset=utf-8',

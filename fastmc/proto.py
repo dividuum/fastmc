@@ -1479,42 +1479,38 @@ protocol(4).state(PLAY).from_server(0x22, "MultiBlockChange", """
     changes         changes
 """)
 
-protocol(5).set_name("14w02a")
+protocol(5).set_name("1.7.6")
 protocol(5).based_on(4)
-protocol(5).state(PLAY).from_server(0x02, "ChatMesage", """
+protocol(5).state(PLAY).from_server(0x0c, "SpawnPlayer", """
+    eid             varint
+    uuid            string
+    name            string
+    data            varint_player_data_array
+    x               int32
+    y               int32
+    z               int32
+    yaw             ubyte
+    pitch           ubyte
+    current_item    short
+    metadata        metadata
+""")
+
+protocol(6).set_name("14w03a")
+protocol(6).based_on(4)
+protocol(6).state(PLAY).from_server(0x02, "ChatMesage", """
     chat            json
     position        byte
 """)
-protocol(5).state(PLAY).from_server(0x08, "PlayerPositionAndLook", """
+protocol(6).state(PLAY).from_server(0x05, "SpawnPosition", """
+    location        position
+""")
+protocol(6).state(PLAY).from_server(0x08, "PlayerPositionAndLook", """
     x               double
     y               double
     z               double
     yaw             float
     pitch           float
     flag            byte
-""")
-protocol(5).state(PLAY).from_server(0x2d, "OpenWindow", """
-    window_id       ubyte
-    type            string
-    title           json
-    slot_count      ubyte
-    eid             int                 self.type == "EntityHorse"
-""")
-protocol(5).state(PLAY).from_server(0x41, "ServerDifficulty", """
-    difficulty      ubyte
-""")
-protocol(5).state(PLAY).from_client(0x15, "ClientSettings", """
-    locale          string
-    view_distance   byte
-    chat_flags      byte
-    chat_colors     bool
-    show_cape       bool
-""")
-
-protocol(6).set_name("14w03a")
-protocol(6).based_on(5)
-protocol(6).state(PLAY).from_server(0x05, "SpawnPosition", """
-    location        position
 """)
 protocol(6).state(PLAY).from_server(0x0a, "UseBed", """
     eid             int
@@ -1542,6 +1538,13 @@ protocol(6).state(PLAY).from_server(0x28, "Effect", """
     data            int
     constant_volume bool
 """)
+protocol(6).state(PLAY).from_server(0x2d, "OpenWindow", """
+    window_id       ubyte
+    type            string
+    title           json
+    slot_count      ubyte
+    eid             int                 self.type == "EntityHorse"
+""")
 protocol(6).state(PLAY).from_server(0x33, "UpdateSign", """
     location        position
     line1           string
@@ -1556,6 +1559,9 @@ protocol(6).state(PLAY).from_server(0x35, "UpdateBlockEntity", """
 """)
 protocol(6).state(PLAY).from_server(0x36, "SignEditorOpen", """
     location        position
+""")
+protocol(6).state(PLAY).from_server(0x41, "ServerDifficulty", """
+    difficulty      ubyte
 """)
 protocol(6).state(PLAY).from_client(0x07, "PlayerDigging", """
     status          byte
