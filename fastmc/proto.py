@@ -42,7 +42,7 @@ OPTIMIZE = True
 # OPTIMIZE = False
 
 DEBUG_PKTS = False
-# DEBUG_PKTS = True
+DEBUG_PKTS = True
 
 class ReadBuffer(object):
     __slots__ = [
@@ -239,6 +239,13 @@ def write_int_byte_array(b, value):
     write_int(b, len(value))
     b.write(value)
 
+def read_varint_byte_array(b):
+    size = read_varint(b)
+    return b.read(size)
+def write_varint_byte_array(b, value):
+    write_varint(b, len(value))
+    b.write(value)
+
 PlayerData = namedtuple("PlayerData", "name value signature")
 def read_player_data(b):
     return PlayerData(
@@ -264,6 +271,8 @@ def make_array_writer(count_writer, record_writer):
     return writer
 read_byte_int_array = make_array_reader(read_byte, read_int)
 write_byte_int_array = make_array_writer(write_byte, write_int)
+read_int_varint_array = make_array_reader(read_int, read_varint)
+write_int_varint_array = make_array_writer(write_int, write_varint)
 read_varint_varint_array = make_array_reader(read_varint, read_varint)
 write_varint_varint_array = make_array_writer(write_varint, write_varint)
 read_short_int_array = make_array_reader(read_short, read_int)
@@ -335,6 +344,27 @@ def write_changes(b, changes):
     write_int(b, len(changes)*4)
     for change in changes:
         write_uint(b, change)
+
+BlockChange = namedtuple("BlockChange", "x y z block_id")
+def read_changes_14w26c(b):
+    def read_change(b):
+        coords = read_ushort(b)
+        block_id = read_varint(b)
+        return BlockChange(
+            (coords >> 12) & 0xF,
+            coords & 0xFF,
+            (coords >>  8) & 0xF,
+            block_id,
+        )
+    count = read_varint(b)
+    return [read_change(b) for _ in xrange(count)]
+def write_changes_14w26c(b, changes):
+    def write_change(b, change):
+        write_ushort(b, change.y | change.z << 8 | change.x << 12)
+        write_varint(b, change.block_id)
+    write_varint(b, len(changes))
+    for change in changes:
+        write_change(b, change)
 
 Vector = namedtuple("Vector", "x y z")
 def read_vector(b):
@@ -505,25 +535,200 @@ def write_map_chunk_bulk(b, bulk):
         write_ushort(b, chunk.primary_bitmap)
         write_ushort(b, chunk.add_bitmap)
 
-def read_raw(b):
+ChunkBulk14w28a = namedtuple("ChunkBulk14w28a", "sky_light_sent data chunks")
+Chunk14w28a = namedtuple("Chunk14w28a", "x z primary_bitmap")
+def read_map_chunk_bulk_14w28a(b):
+    sky_light_sent = read_bool(b)
+    num_chunks = read_varint(b)
+    chunks = []
+    for n in xrange(num_chunks):
+        chunk_x = read_int(b)
+        chunk_z = read_int(b)
+        primary_bitmap = read_ushort(b)
+        chunks.append(Chunk14w28a(chunk_x, chunk_z, primary_bitmap))
+    data_size = read_varint(b)
+    data = b.read(data_size)
+    return ChunkBulk(sky_light_sent, data, chunks)
+def write_map_chunk_bulk_14w28a(b, bulk):
+    write_bool(b, bulk.sky_light_sent)
+    write_varint(b, len(bulk.chunks))
+    for chunk in bulk.chunks:
+        write_int(b, chunk.x)
+        write_int(b, chunk.z)
+        write_ushort(b, chunk.primary_bitmap)
+    write_varint(b, len(bulk.data))
+    b.write(bulk.data)
+
+MapIcon = namedtuple("MapIcon", "direction type x y")
+def read_map_icons(b):
+    def read_icon(b):
+        dir_type = read_byte(b)
+        x = read_byte(b)
+        y = read_byte(b)
+        return MapIcon(dir_type >> 4, dir_type & 0xF, x, y)
+    num_icons = read_varint(b)
+    icons = []
+    for n in xrange(num_icons):
+        icons.append(read_icon(b))
+    return icons
+def write_map_icons(b, icons):
+    write_varint(b, len(icons))
+    for icon in icons:
+        write_byte(icon.direction << 4 | icon.type)
+        write_byte(icon.x)
+        write_byte(icon.y)
+
+PlayerListActions = namedtuple("PlayerListAction", "action players")
+LIST_ACTION_ADD_PLAYER = 0
+PlayerListActionAdd = namedtuple("PlayerListActionAdd", "uuid name properties game_mode ping display_name")
+PlayerListActionAddProperty = namedtuple("PlayerListActionAddProperty", "name value signature")
+
+LIST_ACTION_UPDATE_GAMEMODE = 1
+PlayerListActionGamemode = namedtuple("PlayerListActionGamemode", "uuid game_mode")
+
+LIST_ACTION_UPDATE_LATENCY = 2
+PlayerListActionLatency = namedtuple("PlayerListActionLatency", "uuid ping")
+
+LIST_ACTION_UPDATE_DISPLAY_NAME = 3
+PlayerListActionDisplayName = namedtuple("PlayerListActionDisplayName", "uuid display_name")
+
+LIST_ACTION_REMOVE_PLAYER = 4
+PlayerListActionRemove = namedtuple("PlayerListActionRemove", "uuid")
+
+def read_list_actions(b):
+    action = read_varint(b)
+    num_players = read_varint(b)
+    players = []
+    for _ in xrange(num_players):
+        uuid = read_string(b)
+        if action == LIST_ACTION_ADD_PLAYER:
+            name = read_string(b)
+            num_properties = read_varint(b)
+            properties = []
+            for _ in xrange(num_properties):
+                prop_name = read_string(b)
+                prop_value = read_string(b)
+                is_signed = read_bool(b)
+                if is_signed:
+                    prop_sig = read_string(b)
+                else:
+                    prop_sig = None
+                properties.append(PlayerListActionAddProperty(
+                    prop_name, prop_value, prop_sig
+                ))
+            game_mode = read_varint(b)
+            ping = read_varint(b)
+            has_display_name = read_bool(b)
+            if has_display_name:
+                display_name = read_json(b)
+            else:
+                display_name = None
+            players.append(PlayerListActionAdd(
+                uuid, name, properties, game_mode, ping, display_name
+            ))
+        elif action == LIST_ACTION_UPDATE_GAMEMODE:
+            game_mode = read_varint(b)
+            players.append(PlayerListActionGamemode(uuid, game_mode))
+        elif action == LIST_ACTION_UPDATE_LATENCY:
+            ping = read_varint(b)
+            players.append(PlayerListActionLatency(uuid, ping))
+        elif action == LIST_ACTION_UPDATE_DISPLAY_NAME:
+            has_display_name = read_bool(b)
+            if has_display_name:
+                display_name = read_json(b)
+            else:
+                display_name = None
+            players.append(PlayerListActionDisplayName(uuid, display_name))
+        elif action == LIST_ACTION_REMOVE_PLAYER:
+            players.append(PlayerListActionRemove(uuid))
+        else:
+            raise ValueError("invalid player list action")
+    return PlayerListActions(action, players)
+def write_list_actions(b, actions):
+    write_varint(b, actions.action)
+    write_varint(b, len(actions.players))
+    for player in actions.players:
+        write_string(b, player.uuid)
+        if actions.action == LIST_ACTION_ADD_PLAYER:
+            write_string(b, player.name)
+            write_varint(b, len(player.properties))
+            for property in player.properties:
+                write_string(b, property.name)
+                write_string(b, property.value)
+                has_signature = property.signature is not None
+                write_bool(b, has_signature)
+                if has_signature:
+                    write_string(b, property.signature)
+            write_varint(b, player.game_mode)
+            write_varint(b, player.ping)
+            has_display_name = player.display_name is not None
+            write_bool(b, has_display_name)
+            if has_display_name:
+                write_string(b, player.display_name)
+        elif actions.action == LIST_ACTION_UPDATE_GAMEMODE:
+            write_varint(player.game_mode)
+        elif actions.action == LIST_ACTION_UPDATE_LATENCY:
+            write_varint(player.ping)
+        elif actions.action == LIST_ACTION_UPDATE_DISPLAY_NAME:
+            has_display_name = player.display_name is not None
+            write_bool(b, has_display_name)
+            if has_display_name:
+                write_string(b, player.display_name)
+        elif actions.action == LIST_ACTION_REMOVE_PLAYER:
+            pass
+        else:
+            raise ValueError("invalid player list action")
+
+def read_raw(b, expect_compressed=False):
     ss = b.snapshot()
     pkt_size = read_varint(b)
     if pkt_size is None:
         b.restore(ss)
         return None
-    raw = b.read(pkt_size)
-    if len(raw) != pkt_size:
-        b.restore(ss)
-        return None
-    return StringIO(raw)
 
-def write_packet(b, pkt):
+    if expect_compressed:
+        data_length = read_varint(b)
+        if data_length is None:
+            b.restore(ss)
+            return None
+
+        data_size = pkt_size - size_varint(data_length)
+        data = b.read(data_size)
+        if len(data) != data_size:
+            b.restore(ss)
+            return None
+
+        if data_length == 0: # uncompressed
+            return StringIO(data)
+        else:
+            return StringIO(data.decode('zlib'))
+    else:
+        data = b.read(pkt_size)
+        if len(data) != pkt_size:
+            b.restore(ss)
+            return None
+        return StringIO(data)
+
+def write_packet(b, pkt, compression_threshold=None):
     raw = StringIO()
     write_varint(raw, pkt.id)
     pkt.emit(raw)
     size = raw.tell()
-    write_varint(b, size)
-    b.write(raw.getvalue())
+    if compression_threshold is None:
+        write_varint(b, size)
+        b.write(raw.getvalue())
+    elif size >= compression_threshold:
+        data = raw.getvalue().encode('zlib')
+        data_size = size_varint(len(data)) + len(data)
+        write_varint(data_size)
+        write_varint(len(data))
+        b.write(data)
+    else:
+        data = raw.getvalue()
+        data_size = size_varint(0) + len(data)
+        write_varint(data_size)
+        write_varint(0)
+        b.write(data)
 
 PROTOCOL_LINE = re.compile(r"(\w+)\s+(\w+)(?:\s+(.*))?").match
 PRIMITIVES = {
@@ -832,6 +1037,7 @@ class Endpoint(object):
     def __init__(self, protocol_version, side):
         self._side = side
         self._protocol = ProtocolVersion[protocol_version]
+        self._compression_threshold = None
         self.switch_state(HANDSHAKE)
 
     @property
@@ -842,13 +1048,18 @@ class Endpoint(object):
     def state(self):
         return self._state
 
+    def set_compression_threshold(self, compression_threshold):
+        if compression_threshold == -1:
+            compression_threshold = None
+        self._compression_threshold = compression_threshold
+
     def switch_state(self, state):
         self._state = state
         self._state_packets = self._protocol.get_packets(state, self._side)
         log.debug("endpoint switch to state %d" % (self._state))
 
     def read(self, buf):
-        raw = read_raw(buf)
+        raw = read_raw(buf, expect_compressed=self._compression_threshold is not None)
         if raw is None:
             return None, None
         pkt_id = read_varint(raw)
@@ -857,8 +1068,11 @@ class Endpoint(object):
 
     def write(self, buf, pkt_id, **data):
         # log.debug("sending pkt id %d %r" % (pkt_id, data))
-        write_packet(buf, self._state_packets[pkt_id].create(**data))
-
+        write_packet(
+            buf, 
+            self._state_packets[pkt_id].create(**data),
+            compression_threshold = self._compression_threshold,
+        )
 
 class MinecraftSocket(object):
     def __init__(self, sock):
@@ -1406,10 +1620,10 @@ protocol(0).state(PLAY).from_client(0x0c, "SteerVehicle", """
     unmount         bool
 """)
 protocol(0).state(PLAY).from_client(0x0d, "CloseWindow", """
-    window_id       byte
+    window_id       ubyte
 """)
 protocol(0).state(PLAY).from_client(0x0e, "ClickWindow", """
-    window_id       byte
+    window_id       ubyte
     slot            short
     button          byte
     action_num      short
@@ -1495,16 +1709,38 @@ protocol(5).state(PLAY).from_server(0x0c, "SpawnPlayer", """
     metadata        metadata
 """)
 
-protocol(6).set_name("14w03a")
-protocol(6).based_on(4)
-protocol(6).state(PLAY).from_server(0x02, "ChatMesage", """
+protocol(47).set_name("1.8")
+protocol(47).based_on(5)
+############################################### Login
+protocol(47).state(LOGIN).from_server(0x03, "SetCompression", """
+    threshold       varint
+""")
+############################################### Play
+protocol(47).state(PLAY).from_server(0x00, "KeepAlive", """
+    keepalive_id    varint 
+""")
+protocol(47).state(PLAY).from_server(0x01, "JoinGame", """
+    eid             int
+    game_mode       ubyte
+    dimension       byte
+    difficulty      ubyte
+    max_players     ubyte
+    level_type      string
+    reduced_debug   bool
+""")
+protocol(47).state(PLAY).from_server(0x02, "ChatMesage", """
     chat            json
     position        byte
 """)
-protocol(6).state(PLAY).from_server(0x05, "SpawnPosition", """
-    location        position
+protocol(47).state(PLAY).from_server(0x05, "SpawnPosition", """
+    location        position_packed
 """)
-protocol(6).state(PLAY).from_server(0x08, "PlayerPositionAndLook", """
+protocol(47).state(PLAY).from_server(0x06, "HealthUpdate", """
+    health          float
+    food            varint
+    food_saturation float
+""")
+protocol(47).state(PLAY).from_server(0x08, "PlayerPositionAndLook", """
     x               double
     y               double
     z               double
@@ -1512,105 +1748,12 @@ protocol(6).state(PLAY).from_server(0x08, "PlayerPositionAndLook", """
     pitch           float
     flag            byte
 """)
-protocol(6).state(PLAY).from_server(0x0a, "UseBed", """
-    eid             int
-    location        position
-""")
-protocol(6).state(PLAY).from_server(0x23, "BlockChange", """
-    location        position
-    block_type      varint
-    block_data      ubyte
-""")
-protocol(6).state(PLAY).from_server(0x24, "BlockAction", """
-    location        position
-    b1              ubyte
-    b2              ubyte
-    block_type      varint
-""")
-protocol(6).state(PLAY).from_server(0x25, "BlockBreakAnimation", """
-    eid             varint
-    location        position
-    destroy_stage   byte
-""")
-protocol(6).state(PLAY).from_server(0x28, "Effect", """
-    effect_id       int
-    location        position
-    data            int
-    constant_volume bool
-""")
-protocol(6).state(PLAY).from_server(0x2d, "OpenWindow", """
-    window_id       ubyte
-    type            string
-    title           json
-    slot_count      ubyte
-    eid             int                 self.type == "EntityHorse"
-""")
-protocol(6).state(PLAY).from_server(0x33, "UpdateSign", """
-    location        position
-    line1           string
-    line2           string
-    line3           string
-    line4           string
-""")
-protocol(6).state(PLAY).from_server(0x35, "UpdateBlockEntity", """
-    location        position
-    action          ubyte
-    nbt             short_byte_array
-""")
-protocol(6).state(PLAY).from_server(0x36, "SignEditorOpen", """
-    location        position
-""")
-protocol(6).state(PLAY).from_server(0x41, "ServerDifficulty", """
-    difficulty      ubyte
-""")
-protocol(6).state(PLAY).from_client(0x07, "PlayerDigging", """
-    status          byte
-    location        position
-    face            byte
-""")
-protocol(6).state(PLAY).from_client(0x08, "BlockPlacement", """
-    location        position
-    direction       byte
-    held_item       slot
-    cursor_x        byte
-    cursor_y        byte
-    cursor_z        byte
-""")
-protocol(6).state(PLAY).from_client(0x12, "UpdateSign", """
-    location        position
-    line1           string
-    line2           string
-    line3           string
-    line4           string
-""")
-protocol(6).state(PLAY).from_client(0x15, "ClientSettings", """
-    locale          string
-    view_distance   byte
-    chat_flags      byte
-    chat_colors     bool
-    displayed_skin  ubyte
-""")
-
-protocol(7).set_name("14w04a")
-protocol(7).based_on(6)
-protocol(7).state(PLAY).from_server(0x04, "EntityEquipment", """
-    eid             varint
-    slot            short
-    item            slot
-""")
-protocol(7).state(PLAY).from_server(0x05, "SpawnPosition", """
-    location        position_packed
-""")
-protocol(7).state(PLAY).from_server(0x06, "HealthUpdate", """
-    health          float
-    food            varint
-    food_saturation float
-""")
-protocol(7).state(PLAY).from_server(0x0a, "UseBed", """
+protocol(47).state(PLAY).from_server(0x0a, "UseBed", """
     eid             varint
     location        position_packed
 """)
-protocol(7).state(PLAY).from_server(0x0c, "SpawnPlayer", """
+# XXX: probably wrong
+protocol(47).state(PLAY).from_server(0x0c, "SpawnPlayer", """
     eid             varint
     uuid            string
     name            string
@@ -1623,139 +1766,197 @@ protocol(7).state(PLAY).from_server(0x0c, "SpawnPlayer", """
     current_item    short
     metadata        metadata
 """)
-protocol(7).state(PLAY).from_server(0x0d, "CollectItem", """
+protocol(47).state(PLAY).from_server(0x0d, "CollectItem", """
     collected_eid   varint
     collector_eid   varint
 """)
-protocol(7).state(PLAY).from_server(0x12, "EntityVelocity", """
+protocol(47).state(PLAY).from_server(0x10, "SpawnPainting", """
+    eid             varint
+    title           string
+    location        position_packed
+    direction       ubyte
+""")
+protocol(47).state(PLAY).from_server(0x12, "EntityVelocity", """
     eid             varint
     velocity_x      short
     velocity_y      short
     velocity_z      short
 """)
-protocol(7).state(PLAY).from_server(0x13, "DestroyEntities", """
+protocol(47).state(PLAY).from_server(0x13, "DestroyEntities", """
     eids            varint_varint_array
 """)
-protocol(7).state(PLAY).from_server(0x14, "Entity", """
+protocol(47).state(PLAY).from_server(0x14, "Entity", """
     eid             varint
 """)
-protocol(7).state(PLAY).from_server(0x15, "EntityRelativeMove", """
-    eid             varint
-    dx              byte32
-    dy              byte32
-    dz              byte32
-""")
-protocol(7).state(PLAY).from_server(0x16, "EntityLook", """
-    eid             varint
-    yaw             ubyte
-    pitch           ubyte
-""")
-protocol(7).state(PLAY).from_server(0x17, "EntityLookAndRelativeMove", """
+protocol(47).state(PLAY).from_server(0x15, "EntityRelativeMove", """
     eid             varint
     dx              byte32
     dy              byte32
     dz              byte32
+    on_ground       bool
+""")
+protocol(47).state(PLAY).from_server(0x16, "EntityLook", """
+    eid             varint
     yaw             ubyte
     pitch           ubyte
+    on_ground       bool
 """)
-protocol(7).state(PLAY).from_server(0x18, "EntityTeleport", """
+protocol(47).state(PLAY).from_server(0x17, "EntityLookAndRelativeMove", """
+    eid             varint
+    dx              byte32
+    dy              byte32
+    dz              byte32
+    yaw             ubyte
+    pitch           ubyte
+    on_ground       bool
+""")
+protocol(47).state(PLAY).from_server(0x18, "EntityTeleport", """
     eid             varint
     x               int32
     y               int32
     z               int32
     yaw             ubyte
     pitch           ubyte
+    on_ground       bool
 """)
-protocol(7).state(PLAY).from_server(0x19, "EntityHeadLook", """
+protocol(47).state(PLAY).from_server(0x19, "EntityHeadLook", """
     eid             varint
     head_yaw        ubyte
 """)
-protocol(7).state(PLAY).from_server(0x1c, "EntityMetadata", """
+protocol(47).state(PLAY).from_server(0x1c, "EntityMetadata", """
     eid             varint
     metadata        metadata
 """)
-protocol(7).state(PLAY).from_server(0x1d, "EntityEffect", """
+protocol(47).state(PLAY).from_server(0x1d, "EntityEffect", """
     eid             varint
     effect_id       byte
     amplifier       byte
     duration        varint
+    hide_particles  bool
 """)
-protocol(7).state(PLAY).from_server(0x1e, "RemoveEntityEffect", """
+protocol(47).state(PLAY).from_server(0x1e, "RemoveEntityEffect", """
     eid             varint
     effect_id       byte
 """)
-protocol(7).state(PLAY).from_server(0x1f, "SetExperience", """
+protocol(47).state(PLAY).from_server(0x1f, "SetExperience", """
     bar             float
     level           varint
     total_exp       varint
 """)
-protocol(7).state(PLAY).from_server(0x20, "EntityProperty", """
+protocol(47).state(PLAY).from_server(0x20, "EntityProperty", """
     eid             varint
     properties      property_array_14w04a
 """)
-protocol(7).state(PLAY).from_server(0x23, "BlockChange", """
-    location        position_packed
-    block_type      varint
-    block_data      ubyte
+protocol(47).state(PLAY).from_server(0x21, "ChunkData", """
+    chunk_x         int
+    chunk_z         int
+    continuous      bool
+    primary_bitmap  ushort
+    data            varint_byte_array
 """)
-protocol(7).state(PLAY).from_server(0x24, "BlockAction", """
+protocol(47).state(PLAY).from_server(0x22, "MultiBlockChange", """
+    chunk_x         int
+    chunk_z         int
+    changes         changes_14w26c
+""")
+protocol(47).state(PLAY).from_server(0x23, "BlockChange", """
+    location        position_packed
+    block_id        varint
+""")
+protocol(47).state(PLAY).from_server(0x24, "BlockAction", """
     location        position_packed
     b1              ubyte
     b2              ubyte
     block_type      varint
 """)
-protocol(7).state(PLAY).from_server(0x25, "BlockBreakAnimation", """
+protocol(47).state(PLAY).from_server(0x25, "BlockBreakAnimation", """
     eid             varint
     location        position_packed
     destroy_stage   byte
 """)
-protocol(7).state(PLAY).from_server(0x28, "Effect", """
+protocol(47).state(PLAY).from_server(0x26, "MapChunkBulk", """
+    bulk            map_chunk_bulk_14w28a
+""")
+protocol(47).state(PLAY).from_server(0x28, "Effect", """
     effect_id       int
     location        position_packed
     data            int
     constant_volume bool
 """)
-protocol(7).state(PLAY).from_server(0x33, "UpdateSign", """
-    location        position_packed
-    line1           string
-    line2           string
-    line3           string
-    line4           string
+protocol(47).state(PLAY).from_server(0x2a, "Particle", """
+    particle_id     int
+    long_distance   bool
+    x               float
+    y               float
+    z               float
+    offset_x        float
+    offset_y        float
+    offset_z        float
+    speed           float
+    particles       int_varint_array
 """)
-protocol(7).state(PLAY).from_server(0x35, "UpdateBlockEntity", """
+protocol(47).state(PLAY).from_server(0x2d, "OpenWindow", """
+    window_id       ubyte
+    type            string
+    title           json
+    slot_count      ubyte
+    eid             int                 self.type == "EntityHorse"
+""")
+protocol(47).state(PLAY).from_server(0x33, "UpdateSign", """
+    location        position_packed
+    line1           json
+    line2           json
+    line3           json
+    line4           json
+""")
+protocol(47).state(PLAY).from_server(0x34, "Maps", """
+    map_id          varint
+    scale           byte
+    icons           map_icons
+    columns         byte
+    rows            byte                self.columns > 0
+    x               byte                self.columns > 0
+    y               byte                self.columns > 0
+    data            varint_byte_array   self.columns > 0
+""")
+protocol(47).state(PLAY).from_server(0x35, "UpdateBlockEntity", """
     location        position_packed
     action          ubyte
     nbt             short_byte_array
 """)
-protocol(7).state(PLAY).from_server(0x36, "SignEditorOpen", """
+protocol(47).state(PLAY).from_server(0x36, "SignEditorOpen", """
     location        position_packed
 """)
-protocol(7).state(PLAY).from_client(0x07, "PlayerDigging", """
-    status          byte
-    location        position_packed
-    face            byte
+protocol(47).state(PLAY).from_server(0x38, "PlayerListItem", """
+    list_actions    list_actions 
 """)
-protocol(7).state(PLAY).from_server(0x38, "PlayerListItem", """
+protocol(47).state(PLAY).from_server(0x3b, "ScoreboardObjective", """
     name            string
-    online          bool
-    ping            varint
+    mode            byte
+    value           string              self.mode == 0 or self.mode == 2
+    type            string              self.mode == 0 or self.mode == 2
 """)
-protocol(7).state(PLAY).from_server(0x3c, "UpdateScore", """
+protocol(47).state(PLAY).from_server(0x3c, "UpdateScore", """
     name            string
     remove          byte
     score_name      string              self.remove != 1
     value           varint              self.remove != 1
 """)
-protocol(7).state(PLAY).from_server(0x3e, "Teams", """
-    team_name       string
-    mode            byte
-    display_name    string              self.mode == 0 or self.mode == 2
-    prefix          string              self.mode == 0 or self.mode == 2
-    suffix          string              self.mode == 0 or self.mode == 2
-    friendly_fire   byte                self.mode == 0 or self.mode == 2
-    players         varint_string_array self.mode in (0, 3, 4)
+protocol(47).state(PLAY).from_server(0x3e, "Teams", """
+    team_name           string
+    mode                byte
+    display_name        string              self.mode in (0, 2)
+    prefix              string              self.mode in (0, 2)
+    suffix              string              self.mode in (0, 2)
+    friendly_fire       byte                self.mode in (0, 2)
+    named_tag_visible   string              self.mode in (0, 2)
+    color               byte                self.mode in (0, 2) 
+    players             varint_string_array self.mode in (0, 3, 4)
 """)
-protocol(7).state(PLAY).from_server(0x42, "CombatEvent", """
+protocol(47).state(PLAY).from_server(0x41, "ServerDifficulty", """
+    difficulty      ubyte
+""")
+protocol(47).state(PLAY).from_server(0x42, "CombatEvent", """
     event           ubyte
     duration        varint              self.event == 1
     end_eid         int                 self.event == 1
@@ -1763,19 +1964,73 @@ protocol(7).state(PLAY).from_server(0x42, "CombatEvent", """
     dead_eid        int                 self.event == 2
     message         string              self.event == 2
 """)
-protocol(7).state(PLAY).from_client(0x00, "KeepAlive", """
+protocol(47).state(PLAY).from_server(0x43, "Camera", """
+    camera_id       varint
+""")
+protocol(47).state(PLAY).from_server(0x44, "WorldBorder", """
+    action          varint
+    x               double              self.action in (2, 3)
+    z               double              self.action in (2, 3)
+    old_radius      double              self.action in (1, 3)
+    new_radius      double              self.action in (0, 1, 3)
+    speed           varint              self.action in (1, 3)
+    boundary        varint              self.action == 3
+    warning_time    varint              self.action in (3, 4)
+    warning_blocks  varint              self.action in (3, 5)
+""")
+protocol(47).state(PLAY).from_server(0x45, "Title", """
+    action          varint
+    text            json                self.action in (0, 1)
+    fade_in         int                 self.action == 2
+    stay            int                 self.action == 2
+    fade_out        int                 self.action == 2
+""")
+protocol(47).state(PLAY).from_server(0x46, "SetCompression", """
+    threshold       varint
+""")
+protocol(47).state(PLAY).from_server(0x47, "PlayerListHeaderFooter", """
+    header          json
+    footer          json
+""")
+protocol(47).state(PLAY).from_server(0x48, "ResourcePackSend", """
+    url             string
+    hash            string
+""")
+protocol(47).state(PLAY).from_server(0x49, "UpdateEntityNBT", """
+    eid             varint
+    nbt             short_byte_array
+""")
+#---------------------------------------------------
+protocol(47).state(PLAY).from_client(0x00, "KeepAlive", """
     keepalive_id    varint 
 """)
-protocol(7).state(PLAY).from_client(0x02, "UseEntity", """
+protocol(47).state(PLAY).from_client(0x02, "UseEntity", """
     target          varint
-    button          ubyte
+    type            varint
+    target_x        float               self.type == 2
+    target_y        float               self.type == 2
+    target_z        float               self.type == 2
 """)
-protocol(7).state(PLAY).from_client(0x07, "PlayerDigging", """
+protocol(47).state(PLAY).from_client(0x04, "PlayerPosition", """
+    x               double
+    y               double
+    z               double
+    on_ground       bool
+""")
+protocol(47).state(PLAY).from_client(0x06, "PlayerPositionAndLook", """
+    x               double
+    y               double
+    z               double
+    yaw             float
+    pitch           float
+    on_ground       bool
+""")
+protocol(47).state(PLAY).from_client(0x07, "PlayerDigging", """
     status          byte
     location        position_packed
     face            byte
 """)
-protocol(7).state(PLAY).from_client(0x08, "BlockPlacement", """
+protocol(47).state(PLAY).from_client(0x08, "BlockPlacement", """
     location        position_packed
     direction       byte
     held_item       slot
@@ -1783,40 +2038,43 @@ protocol(7).state(PLAY).from_client(0x08, "BlockPlacement", """
     cursor_y        byte
     cursor_z        byte
 """)
-protocol(7).state(PLAY).from_client(0x0a, "Animation", """
-""")
-protocol(7).state(PLAY).from_client(0x0b, "EntityAction", """
+protocol(47).state(PLAY).from_client(0x0a, "Animation")
+protocol(47).state(PLAY).from_client(0x0b, "EntityAction", """
     eid             varint
     action_id       ubyte
     jump_boost      varint
 """)
-protocol(7).state(PLAY).from_client(0x0c, "SteerVehicle", """
+protocol(47).state(PLAY).from_client(0x0c, "SteerVehicle", """
     sideways        float
     forward         float
     flags           ubyte
 """)
-protocol(7).state(PLAY).from_client(0x12, "UpdateSign", """
+protocol(47).state(PLAY).from_client(0x12, "UpdateSign", """
     location        position_packed
-    line1           string
-    line2           string
-    line3           string
-    line4           string
+    line1           json
+    line2           json
+    line3           json
+    line4           json
 """)
-protocol(7).state(PLAY).from_client(0x16, "ClientStatus", """
+protocol(47).state(PLAY).from_client(0x14, "TabComplete", """
+    text            string
+    has_position    bool
+    location        position_packed     self.has_position
+""")
+protocol(47).state(PLAY).from_client(0x15, "ClientSettings", """
+    locale          string
+    view_distance   byte
+    chat_flags      byte
+    chat_colors     bool
+    displayed_skin  ubyte
+""")
+protocol(47).state(PLAY).from_client(0x16, "ClientStatus", """
     action_id       ubyte
 """)
-
-protocol(8).set_name("14w04b")
-protocol(8).based_on(7)
-protocol(8).state(PLAY).from_server(0x10, "SpawnPainting", """
-    eid             varint
-    title           string
-    location        position_packed
-    direction       ubyte
+protocol(47).state(PLAY).from_client(0x18, "Spectate", """
+    target_player   string
 """)
-
-protocol(9).set_name("14w05a")
-protocol(9).based_on(8)
-protocol(9).state(PLAY).from_server(0x43, "Camera", """
-    camera_id       varint
+protocol(47).state(PLAY).from_client(0x19, "ResourcePackStatus", """
+    hash            string
+    result          varint
 """)
