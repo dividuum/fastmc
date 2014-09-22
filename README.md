@@ -1,4 +1,4 @@
-## fastmc - A fast Minecraft 1.7 protocol library
+## fastmc - A fast Minecraft 1.7/1.8 protocol library
 
 For my project miners-movies.com I needed a fast and reliable
 parser / writer for the Minecraft protocol. This library is
