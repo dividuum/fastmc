@@ -906,8 +906,8 @@ def write_packet(b, pkt, compression_threshold=None):
     else:
         data = raw.getvalue()
         data_size = size_varint(0) + len(data)
-        write_varint(data_size)
-        write_varint(0)
+        write_varint(b, data_size)
+        write_varint(b, 0)
         b.write(data)
 
 PROTOCOL_LINE = re.compile(r"(\w+)\s+(\w+)(?:\s+(.*))?").match

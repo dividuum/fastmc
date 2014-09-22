@@ -81,15 +81,14 @@ def handle_pkt(session, reader, writer, sock, pkt):
             writer.switch_state(fastmc.proto.PLAY)
         elif pkt.id == 0x03:
             reader.set_compression_threshold(pkt.threshold)
-            # writer.set_compression_threshold(pkt.threshold)
+            writer.set_compression_threshold(pkt.threshold)
     elif reader.state == fastmc.proto.PLAY:
         if pkt.id == 0x00:
-            print "keep alive!"
-            # out_buf = fastmc.proto.WriteBuffer()
-            # writer.write(out_buf, 0x00, 
-            #     keepalive_id = pkt.keepalive_id
-            # )
-            # sock.send(out_buf)
+            out_buf = fastmc.proto.WriteBuffer()
+            writer.write(out_buf, 0x00, 
+                keepalive_id = pkt.keepalive_id
+            )
+            sock.send(out_buf)
         elif pkt.id == 0x46:
             reader.set_compression_threshold(pkt.threshold)
 
