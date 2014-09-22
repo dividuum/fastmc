@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name = 'fastmc',
-    version = '0.6',
+    version = '1.8',
     description = 'Fast Minecraft Protocol Parser/Writer',
     author = 'Florian Wesch',
     author_email = 'fw@dividuum.de',
