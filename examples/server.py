@@ -25,6 +25,13 @@
 # NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import sys
+import pprint
+import uuid
+import logging
+import json
+logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+
 import gevent
 from gevent.server import StreamServer
 
@@ -57,7 +64,14 @@ class Server(object):
                         "max": 1,
                         "online": 0,
                     },  
-                    "description": {"text":"Hello world"},
+                    "description": {
+                        "text":"fastmc",
+                        "color": "red",
+                        "extra": [{
+                            "text": " Test Server",
+                            "color": "blue",
+                        }]
+                    },
                 })
                 self.sock.send(out_buf)
             elif pkt.id == 0x01:
@@ -105,11 +119,31 @@ class Server(object):
                 if not check:
                     raise Exception("Cannot verify your username. Sorry.")
 
-                print check
+                print
+                print "Player information from Mojang"
+                print "---------------------------------------"
+                pprint.pprint(check)
+
+                print
+                print "Decoded Property Values"
+                print "---------------------------------------"
+                pprint.pprint(json.loads(check['properties'][0]['value'].decode('base64')))
 
                 out_buf = fastmc.proto.WriteBuffer()
+
+                # setting the threshold higher is probably a good idea
+                # for a real server. Lets keep it at 64 for this demo, so
+                # it can actually compress the disconnect message.
+                threshold = 64
+                self.writer.write(out_buf, 0x03,
+                    threshold = threshold,
+                )
+
+                self.reader.set_compression_threshold(threshold)
+                self.writer.set_compression_threshold(threshold)
+
                 self.writer.write(out_buf, 0x02, 
-                    uuid = check['id'],
+                    uuid = str(uuid.UUID(check['id'])),
                     username = self.player_ign,
                 )
 
@@ -119,12 +153,24 @@ class Server(object):
                 self.sock.send(out_buf)
                 print "%s logged in" % self.player_ign
 
+                out_buf = fastmc.proto.WriteBuffer()
+                self.writer.write(out_buf, 0x40, 
+                    reason = {"text": "", "extra": [{
+                        "color": "yellow",
+                        "text": "That's all. There's no world on this server.",
+                    }, {
+                        "color": "red",
+                        "text": " Thanks for testing!",
+                    }]},
+                )
+                self.sock.send(out_buf)
+
         elif self.reader.state == fastmc.proto.PLAY:
-            # game play pakets
+            # ready to receive game play packets from client
             pass
 
     def reader(self, sock):
-        protocol_version = 4
+        protocol_version = 47
 
         self.sock = fastmc.proto.MinecraftSocket(sock)
         self.reader, self.writer = fastmc.proto.Endpoint.server_pair(protocol_version)

@@ -130,7 +130,7 @@ def client(session, sock, host, port):
 
 def do_client(username, password, host, port):
     session = fastmc.auth.Session.from_credentials(username, password)
-    sock = gevent.socket.create_connection((host, port), timeout=2)
+    sock = gevent.socket.create_connection((host, port))
     try:
         client(session, sock, host, port)
     finally:
