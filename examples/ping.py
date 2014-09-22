@@ -32,8 +32,8 @@ import gevent.socket
 
 import fastmc.proto
 
-def pinger(sock):
-    protocol_version = 4
+def pinger(sock, host, port):
+    protocol_version = 0
 
     sock = fastmc.proto.MinecraftSocket(sock)
     in_buf = fastmc.proto.ReadBuffer()
@@ -42,8 +42,8 @@ def pinger(sock):
     out_buf = fastmc.proto.WriteBuffer()
     writer.write(out_buf, 0x00, 
         version = writer.protocol.version,
-        addr = "miners-movies.com",
-        port = 25565,
+        addr = host,
+        port = port,
         state = fastmc.proto.STATUS,
     )
     reader.switch_state(fastmc.proto.STATUS)
@@ -75,8 +75,16 @@ def pinger(sock):
                 print "%d ms ping" % (now - pkt.time)
                 return
 
-sock = gevent.socket.create_connection(('miners-movies.com', 25565), timeout=2)
-try:
-    pinger(sock)
-finally:
-    sock.close()
+def do_ping(host, port):
+    sock = gevent.socket.create_connection((host, port), timeout=2)
+    try:
+        pinger(sock, host, port)
+    finally:
+        sock.close()
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) <= 1:
+        print "%s <host> [<port>]" % sys.argv[0]
+        sys.exit(0)
+    do_ping(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 25565)
