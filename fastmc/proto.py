@@ -898,11 +898,11 @@ def write_packet(b, pkt, compression_threshold=None):
         write_varint(b, size)
         b.write(raw.getvalue())
     elif size >= compression_threshold:
-        data = raw.getvalue().encode('zlib')
-        data_size = size_varint(len(data)) + len(data)
-        write_varint(data_size)
-        write_varint(len(data))
-        b.write(data)
+        data = raw.getvalue()
+        compressed = data.encode('zlib')
+        write_varint(b, size_varint(len(data)) + len(compressed))
+        write_varint(b, len(data))
+        b.write(compressed)
     else:
         data = raw.getvalue()
         data_size = size_varint(0) + len(data)
