@@ -40,6 +40,9 @@ import requests
 
 log = logging.getLogger(__name__)
 
+# Encryption magic based on sadimusi/mc3p encryption implementation
+# https://github.com/sadimusi/mc3p/blob/master/mc3p/encryption.py
+
 def _pkcs1_unpad(bytes):
     pos = bytes.find('\x00')
     if pos > 0:
