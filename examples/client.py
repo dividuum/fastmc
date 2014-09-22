@@ -25,20 +25,16 @@
 # NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from gevent import socket
+import sys
+import logging
+logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+
+import gevent.socket
 
 import fastmc.proto
 import fastmc.auth
 
-CLIENT_USERNAME = '<username>'
-CLIENT_PASSWORD = '<password>'
-
-TARGET_ADDR = 'm.hcfluffy.de'
-TARGET_PORT = 25565
-
-session = fastmc.auth.Session.from_credentials(CLIENT_USERNAME, CLIENT_PASSWORD)
-
-def handle_pkt(reader, writer, sock, pkt):
+def handle_pkt(session, reader, writer, sock, pkt):
     if reader.state == fastmc.proto.LOGIN:
         if pkt.id == 0x01:
             if pkt.public_key != '':
@@ -83,12 +79,25 @@ def handle_pkt(reader, writer, sock, pkt):
         elif pkt.id == 0x02:
             reader.switch_state(fastmc.proto.PLAY)
             writer.switch_state(fastmc.proto.PLAY)
-    else:
-        print pkt
-        print
+        elif pkt.id == 0x03:
+            reader.set_compression_threshold(pkt.threshold)
+            # writer.set_compression_threshold(pkt.threshold)
+    elif reader.state == fastmc.proto.PLAY:
+        if pkt.id == 0x00:
+            print "keep alive!"
+            # out_buf = fastmc.proto.WriteBuffer()
+            # writer.write(out_buf, 0x00, 
+            #     keepalive_id = pkt.keepalive_id
+            # )
+            # sock.send(out_buf)
+        elif pkt.id == 0x46:
+            reader.set_compression_threshold(pkt.threshold)
 
-def client(sock):
-    protocol_version = 4
+    print pkt
+    print
+
+def client(session, sock, host, port):
+    protocol_version = 47
 
     sock = fastmc.proto.MinecraftSocket(sock)
     in_buf = fastmc.proto.ReadBuffer()
@@ -97,8 +106,8 @@ def client(sock):
     out_buf = fastmc.proto.WriteBuffer()
     writer.write(out_buf, 0x00, 
         version = writer.protocol.version,
-        addr = TARGET_ADDR,
-        port = TARGET_PORT,
+        addr = host,
+        port = port,
         state = fastmc.proto.LOGIN,
     )
     reader.switch_state(fastmc.proto.LOGIN)
@@ -117,7 +126,20 @@ def client(sock):
             pkt, pkt_raw = reader.read(in_buf)
             if pkt is None:
                 break
-            handle_pkt(reader, writer, sock, pkt)
+            handle_pkt(session, reader, writer, sock, pkt)
     sock.close()
 
-client(socket.create_connection((TARGET_ADDR, TARGET_PORT), timeout=10))
+def do_client(username, password, host, port):
+    session = fastmc.auth.Session.from_credentials(username, password)
+    sock = gevent.socket.create_connection((host, port), timeout=2)
+    try:
+        client(session, sock, host, port)
+    finally:
+        sock.close()
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) <= 3:
+        print "%s <username> <password> <host> [<port>]" % sys.argv[0]
+        sys.exit(0)
+    do_client(sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]) if len(sys.argv) > 4 else 25565)
