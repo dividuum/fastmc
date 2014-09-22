@@ -30,6 +30,7 @@
 import re
 import logging
 
+from array import array
 from struct import pack, unpack, Struct
 from collections import namedtuple
 from cStringIO import StringIO
@@ -42,7 +43,7 @@ OPTIMIZE = True
 # OPTIMIZE = False
 
 DEBUG_PKTS = False
-DEBUG_PKTS = True
+# DEBUG_PKTS = True
 
 class ReadBuffer(object):
     __slots__ = [
@@ -136,10 +137,29 @@ def write_position(b, pos):
     write_int(b, pos.z)
 
 def read_position_packed(b):
-    p = read_long(b)
-    return Position(p >> 38, (p >> 26) & 0xfff, p & 0x3ffffff)
+    # most retarded protocol encoding ever to save
+    # a few bytes in a data type that's rarly used.
+    p = read_ulong(b)
+    def twentysix_bit_2_complement(v):
+        if v & 0x2000000:
+            v = v - (1 << 26)
+        return v
+    return Position(
+        twentysix_bit_2_complement(p >> 38), 
+        (p >> 26) & 0xfff, 
+        twentysix_bit_2_complement(p & 0x3ffffff)
+    )
 def write_position_packed(b, pos):
-    write_long(b, pos.x << 38 | pos.y << 26 | pos.z)
+    write_ulong(b, (pos.x & 0x3ffffff) << 38 | pos.y << 26 | pos.z & 0x3ffffff)
+
+def read_short_string(b):
+    size = read_short(b)
+    string = b.read(size)
+    return string.decode("utf8")
+def write_short_string(b, string):
+    encoded = string.encode("utf8")
+    write_short(b, len(encoded))
+    b.write(encoded)
 
 def read_string(b):
     size = read_varint(b)
@@ -269,6 +289,7 @@ def make_array_writer(count_writer, record_writer):
         for value in array:
             record_writer(b, value)
     return writer
+
 read_byte_int_array = make_array_reader(read_byte, read_int)
 write_byte_int_array = make_array_writer(write_byte, write_int)
 read_int_varint_array = make_array_reader(read_int, read_varint)
@@ -287,28 +308,6 @@ read_varint_player_data_array = make_array_reader(read_varint, read_player_data)
 write_varint_player_data_array = make_array_writer(write_varint, write_player_data)
 
 Slot = namedtuple("Slot", "item_id count damage nbt")
-def read_slot_array(b):
-    slots = []
-    num_slots = read_short(b)
-    for slot in xrange(num_slots):
-        item_id = read_short(b)
-        if item_id == -1:
-            slots.append(None)
-            continue
-        count = read_byte(b) 
-        damage = read_short(b)
-        nbt_size = read_short(b)
-        if nbt_size != -1:
-            nbt = b.read(nbt_size)
-        else:
-            nbt = None
-        slots.append(Slot(item_id, count, damage, nbt))
-    return slots
-def write_slot_array(b, slots):
-    write_short(b, len(slots))
-    for slot in slots:
-        write_slot(b, slot)
-
 def read_slot(b):
     item_id = read_short(b)
     if item_id == -1:
@@ -333,6 +332,34 @@ def write_slot(b, slot):
         b.write(slot.nbt)
     else:
         write_short(b, -1)
+
+read_slot_array = make_array_reader(read_short, read_slot)
+write_slot_array = make_array_writer(write_short, write_slot)
+
+def read_slot_1_8(b):
+    item_id = read_short(b)
+    if item_id == -1:
+        return None
+    count = read_byte(b) 
+    damage = read_short(b)
+    name, nbt = read_nbt(b)
+    if nbt.tag_type == NbtTag.END:
+        nbt = None
+    return Slot(item_id, count, damage, nbt)
+def write_slot_1_8(b, slot):
+    if slot is None:
+        write_short(b, -1)
+        return
+    write_short(b, slot.item_id)
+    write_byte(b, slot.count)
+    write_short(b, slot.damage)
+    if slot.nbt is None:
+        write_byte(b, 0)
+    else:
+        write_nbt(b, '', slot.nbt)
+
+read_slot_array_1_8 = make_array_reader(read_short, read_slot_1_8)
+write_slot_array_1_8 = make_array_writer(write_short, write_slot_1_8)
 
 def read_changes(b):
     count = read_short(b)
@@ -377,37 +404,74 @@ def write_vector(b, value):
     write_int(b, value.y)
     write_int(b, value.z)
 
+Rotation = namedtuple("Rotation", "pitch roll yaw")
+def read_rotation(b):
+    pitch = read_float(b)
+    roll = read_float(b)
+    yaw = read_float(b)
+    return Rotation(pitch, roll, yaw)
+def write_rotation(b, value):
+    write_float(b, value.pitch)
+    write_float(b, value.roll)
+    write_float(b, value.yaw)
+
+def make_metadata_pair(readers, writers):
+    def read_metadata(b):
+        meta = {}
+        while 1:
+            item = read_ubyte(b)
+            if item == 0x7f:
+                return meta
+            meta_type = item >> 5
+            meta[item & 0x1f] = meta_type, readers[meta_type](b)
+    def write_metadata(b, meta):
+        for index, (meta_type, meta_value) in meta.iteritems():
+            write_ubyte(b, meta_type << 5 | index & 0x1f)
+            writers[meta_type](b, meta_value)
+        write_ubyte(b, 0x7f)
+    return read_metadata, write_metadata
+
 META_READERS = {
-    0:  read_byte,
-    1:  read_short,
-    2:  read_int,
-    3:  read_float,
-    4:  read_string,
-    5:  read_slot,
-    6:  read_vector,
+    0: read_byte,
+    1: read_short,
+    2: read_int,
+    3: read_float,
+    4: read_string,
+    5: read_slot,
+    6: read_vector,
 }
-def read_metadata(b):
-    meta = {}
-    while 1:
-        item = read_ubyte(b)
-        if item == 0x7f:
-            return meta
-        meta_type = item >> 5
-        meta[item & 0x1f] = meta_type, META_READERS[meta_type](b)
 META_WRITERS = {
-    0:  write_byte,
-    1:  write_short,
-    2:  write_int,
-    3:  write_float,
-    4:  write_string,
-    5:  write_slot,
-    6:  write_vector,
+    0: write_byte,
+    1: write_short,
+    2: write_int,
+    3: write_float,
+    4: write_string,
+    5: write_slot,
+    6: write_vector,
 }
-def write_metadata(b, meta):
-    for index, (meta_type, meta_value) in meta.iteritems():
-        write_ubyte(b, meta_type << 5 | index & 0x1f)
-        META_WRITERS[meta_type](b, meta_value)
-    write_ubyte(b, 0x7f)
+read_metadata, write_metadata = make_metadata_pair(META_READERS, META_WRITERS)
+
+META_READERS_1_8 = {
+    0: read_byte,
+    1: read_short,
+    2: read_int,
+    3: read_float,
+    4: read_string,
+    5: read_slot_1_8,
+    6: read_vector,
+    7: read_rotation,
+}
+META_WRITERS_1_8 = {
+    0: write_byte,
+    1: write_short,
+    2: write_int,
+    3: write_float,
+    4: write_string,
+    5: write_slot_1_8,
+    6: write_vector,
+    7: write_rotation,
+}
+read_metadata_1_8, write_metadata_1_8 = make_metadata_pair(META_READERS_1_8, META_WRITERS_1_8)
 
 Property = namedtuple("Property", "value modifiers")
 Modifier = namedtuple("Modifier", "uuid amount operation")
@@ -462,6 +526,12 @@ def write_property_array_14w04a(b, properties):
                 modifier.amount,
                 modifier.operation
             ))
+
+def read_uuid(b):
+    msl, lsl = unpack(">QQ", b.read(16))
+    return msl << 64 | lsl
+def write_uuid(b, uuid):
+    b.write(pack(">QQ", uuid >> 64, uuid & 0xffffffffffffffff))
 
 SpeedVector = namedtuple("SpeedVector", "x y z")
 ObjectData = namedtuple("ObjectData", "int_val speed")
@@ -536,19 +606,30 @@ def write_map_chunk_bulk(b, bulk):
         write_ushort(b, chunk.add_bitmap)
 
 ChunkBulk14w28a = namedtuple("ChunkBulk14w28a", "sky_light_sent data chunks")
-Chunk14w28a = namedtuple("Chunk14w28a", "x z primary_bitmap")
+Chunk14w28a = namedtuple("Chunk14w28a", "x z primary_bitmap data_offset")
 def read_map_chunk_bulk_14w28a(b):
+    def count_bits(v):
+        return bin(v).count("1") # yep
     sky_light_sent = read_bool(b)
     num_chunks = read_varint(b)
     chunks = []
+    data_offset = 0
     for n in xrange(num_chunks):
         chunk_x = read_int(b)
         chunk_z = read_int(b)
         primary_bitmap = read_ushort(b)
-        chunks.append(Chunk14w28a(chunk_x, chunk_z, primary_bitmap))
-    data_size = read_varint(b)
-    data = b.read(data_size)
-    return ChunkBulk(sky_light_sent, data, chunks)
+        chunks.append(Chunk14w28a(chunk_x, chunk_z, primary_bitmap, data_offset))
+
+        num_chunks = count_bits(primary_bitmap)
+        data_offset += 16*16*16 * 2 * num_chunks      # block data
+        data_offset += 16*16*16 / 2 * num_chunks      # block light
+        if sky_light_sent:
+            data_offset += 16*16*16 / 2 * num_chunks  # sky light
+        data_offset += 16*16                          # biome data
+
+    data = b.read(data_offset)
+    assert len(data) == data_offset
+    return ChunkBulk14w28a(sky_light_sent, buffer(data, 0, data_offset), chunks)
 def write_map_chunk_bulk_14w28a(b, bulk):
     write_bool(b, bulk.sky_light_sent)
     write_varint(b, len(bulk.chunks))
@@ -600,7 +681,7 @@ def read_list_actions(b):
     num_players = read_varint(b)
     players = []
     for _ in xrange(num_players):
-        uuid = read_string(b)
+        uuid = read_uuid(b)
         if action == LIST_ACTION_ADD_PLAYER:
             name = read_string(b)
             num_properties = read_varint(b)
@@ -648,7 +729,7 @@ def write_list_actions(b, actions):
     write_varint(b, actions.action)
     write_varint(b, len(actions.players))
     for player in actions.players:
-        write_string(b, player.uuid)
+        write_uuid(b, player.uuid)
         if actions.action == LIST_ACTION_ADD_PLAYER:
             write_string(b, player.name)
             write_varint(b, len(player.properties))
@@ -678,6 +759,105 @@ def write_list_actions(b, actions):
             pass
         else:
             raise ValueError("invalid player list action")
+
+class NbtTag(namedtuple('NbtTag', 'tag_type value')):
+    END = 0
+    BYTE = 1
+    SHORT = 2
+    INT = 3
+    LONG = 4
+    FLOAT = 5
+    DOUBLE = 6
+    BYTE_ARRAY = 7
+    STRING = 8
+    LIST = 9
+    COMPOUND = 10
+    INT_ARRAY = 11
+NbtList = namedtuple('NbtList', 'tag_type values')
+
+def read_nbt(b):
+    def read_nbt_byte_array(b):
+        length = read_int(b)
+        return array('b', unpack(">%db" % length, b.read(length)))
+    def read_nbt_int_array(b):
+        length = read_int(b)
+        return array('i', unpack(">%di" % length, b.read(length * 4)))
+    def read_nbt_list(b):
+        tag_type = read_byte(b)
+        decoder = TAG_TYPES[tag_type]
+        length = read_int(b)
+        return NbtList(tag_type, [decoder(b) for _ in xrange(length)])
+    def read_nbt_compound(b):
+        out = {}
+        while 1:
+            name, nbt_tag = read_nbt_tag(b)
+            if nbt_tag.tag_type == NbtTag.END:
+                break
+            out[name] = nbt_tag
+        return out
+    def read_nbt_tag(b):
+        tag_type = read_byte(b)
+        if tag_type == NbtTag.END:
+            name = ""
+            value = None
+        else:
+            name = read_short_string(b)
+            value = TAG_TYPES[tag_type](b)
+        return name, NbtTag(tag_type, value)
+    TAG_TYPES = {
+        NbtTag.END: lambda b: None,
+        NbtTag.BYTE: read_byte,
+        NbtTag.SHORT: read_short,
+        NbtTag.INT: read_int,
+        NbtTag.LONG: read_long,
+        NbtTag.FLOAT: read_float,
+        NbtTag.DOUBLE: read_double,
+        NbtTag.BYTE_ARRAY: read_nbt_byte_array,
+        NbtTag.STRING: read_short_string,
+        NbtTag.LIST: read_nbt_list,
+        NbtTag.COMPOUND: read_nbt_compound,
+        NbtTag.INT_ARRAY: read_nbt_int_array,
+    }
+    name, nbt_tag = read_nbt_tag(b)
+    # assert nbt_tag.tag_type == NbtTag.COMPOUND
+    return name, nbt_tag
+
+def write_nbt(b, name, value):
+    def write_nbt_byte_array(b, values):
+        write_int(b, len(values))
+        b.write(pack(">%db" % len(values), *values))
+    def write_nbt_int_array(b, values):
+        write_int(b, len(values))
+        b.write(pack(">%di" % len(values), *values))
+    def write_nbt_list(b, nbt_list):
+        write_byte(b, nbt_list.tag_type)
+        write_int(b, len(nbt_list.values))
+        encoder = TAG_TYPES[nbt_list.tag_type]
+        for value in nbt_list.values:
+            encoder(b, value)
+    def write_nbt_compound(b, values):
+        for name, nbt_tag in values.iteritems():
+            write_nbt_tag(b, name, nbt_tag)
+        write_byte(b, NbtTag.END)
+    def write_nbt_tag(b, name, nbt_tag):
+        assert nbt_tag.tag_type != NbtTag.END
+        write_byte(b, nbt_tag.tag_type)
+        write_short_string(b, name)
+        TAG_TYPES[nbt_tag.tag_type](b, nbt_tag.value)
+    TAG_TYPES = {
+        NbtTag.BYTE: write_byte,
+        NbtTag.SHORT: write_short,
+        NbtTag.INT: write_int,
+        NbtTag.LONG: write_long,
+        NbtTag.FLOAT: write_float,
+        NbtTag.DOUBLE: write_double,
+        NbtTag.BYTE_ARRAY: write_nbt_byte_array,
+        NbtTag.STRING: write_short_string,
+        NbtTag.LIST: write_nbt_list,
+        NbtTag.COMPOUND: write_nbt_compound,
+        NbtTag.INT_ARRAY: write_nbt_int_array,
+    }
+    write_nbt_tag(b, name, value) 
 
 def read_raw(b, expect_compressed=False):
     ss = b.snapshot()
@@ -745,7 +925,7 @@ PRIMITIVES = {
     'int32':    ('i', 4, "%s / 32.0",   "int(%s * 32)"),
     'byte32':   ('b', 1, "%s / 32.0",   "int(%s * 32)"),
 }
-def make_packet_type(pkt_id, pkt_name, desc):
+def make_packet_type(protocol_version, pkt_id, pkt_name, desc):
     def parse_fields():
         for line in desc.split("\n"):
             line = line.strip()
@@ -854,8 +1034,8 @@ def make_packet_type(pkt_id, pkt_name, desc):
     if DEBUG_PKTS:
         code.add("remaining = len(b.read())")
         code.add("if remaining:")
-        code.add("  print '-----> %d unread bytes in 0x%02x' % (remaining, self.id)")
-        code.add("  assert False")
+        code.add("  print 'WARNING: %d unread bytes in 0x%02x' % (remaining, self.id)")
+        # code.add("  assert False")
     code.add("return self")
     code.dedent()
 
@@ -914,7 +1094,7 @@ def make_packet_type(pkt_id, pkt_name, desc):
             for num, line in enumerate(code.get().split("\n")))
         print
 
-    compiled = compile(code.get(), "%s:%s" % (__file__, pkt_name), 'exec')
+    compiled = compile(code.get(), "%s:%s@%d" % (__file__, pkt_name, protocol_version), 'exec')
 
     env = {
         'Struct': Struct
@@ -1011,7 +1191,7 @@ class _Side(object):
 
     def __call__(self, pkt_id, pkt_name, desc=""):
         self._protocol.add_packet(self._state, self._side, 
-            make_packet_type(pkt_id, pkt_name, desc))
+            make_packet_type(self._protocol.version, pkt_id, pkt_name, desc))
 
 
 class Endpoint(object):
@@ -1063,11 +1243,11 @@ class Endpoint(object):
         if raw is None:
             return None, None
         pkt_id = read_varint(raw)
-        # log.debug("received pkt id %d in state %d" % (pkt_id, self._state))
+        log.debug("received pkt id %d in state %d" % (pkt_id, self._state))
         return self._state_packets[pkt_id].parse(raw), raw
 
     def write(self, buf, pkt_id, **data):
-        # log.debug("sending pkt id %d %r" % (pkt_id, data))
+        log.debug("sending pkt id %d %r" % (pkt_id, data))
         write_packet(
             buf, 
             self._state_packets[pkt_id].create(**data),
@@ -1092,6 +1272,7 @@ class MinecraftSocket(object):
 
     def send(self, buf):
         data = buf.getvalue()
+        # print "sending ", data
         if self._encrypt:
             data = self._encrypt(data)
         self._sock_send(data)
@@ -1685,6 +1866,13 @@ protocol(2).based_on(1)
 protocol(3).set_name("1.7.1")
 protocol(3).based_on(2)
 
+#  __     ______     ___  
+# /_ |   |____  |   |__ \ 
+#  | |       / /       ) |
+#  | |      / /       / / 
+#  | | _   / /    _  / /_ 
+#  |_|(_) /_/    (_)|____|
+# 
 protocol(4).set_name("1.7.2")
 protocol(4).based_on(3)
 protocol(4).state(PLAY).from_server(0x22, "MultiBlockChange", """
@@ -1693,6 +1881,13 @@ protocol(4).state(PLAY).from_server(0x22, "MultiBlockChange", """
     changes         changes
 """)
 
+#  __     ______       __  
+# /_ |   |____  |     / /  
+#  | |       / /     / /_  
+#  | |      / /     | '_ \ 
+#  | | _   / /    _ | (_) |
+#  |_|(_) /_/    (_) \___/ 
+#
 protocol(5).set_name("1.7.6")
 protocol(5).based_on(4)
 protocol(5).state(PLAY).from_server(0x0c, "SpawnPlayer", """
@@ -1709,11 +1904,28 @@ protocol(5).state(PLAY).from_server(0x0c, "SpawnPlayer", """
     metadata        metadata
 """)
 
+#   __      ___  
+#  /_ |    / _ \ 
+#   | |   | (_) |
+#   | |    > _ < 
+#   | | _ | (_) |
+#   |_|(_) \___/ 
+#
 protocol(47).set_name("1.8")
 protocol(47).based_on(5)
 ############################################### Login
+protocol(47).state(LOGIN).from_server(0x01, "EncryptionRequest", """
+    server_id       string
+    public_key      varint_byte_array
+    challenge_token varint_byte_array
+""")
 protocol(47).state(LOGIN).from_server(0x03, "SetCompression", """
     threshold       varint
+""")
+#---------------------------------------------------
+protocol(47).state(LOGIN).from_client(0x01, "EncryptionResponse", """
+    shared_secret   varint_byte_array
+    response_token  varint_byte_array
 """)
 ############################################### Play
 protocol(47).state(PLAY).from_server(0x00, "KeepAlive", """
@@ -1731,6 +1943,11 @@ protocol(47).state(PLAY).from_server(0x01, "JoinGame", """
 protocol(47).state(PLAY).from_server(0x02, "ChatMesage", """
     chat            json
     position        byte
+""")
+protocol(47).state(PLAY).from_server(0x04, "EntityEquipment", """
+    eid             varint
+    slot            short
+    item            slot_1_8
 """)
 protocol(47).state(PLAY).from_server(0x05, "SpawnPosition", """
     location        position_packed
@@ -1752,19 +1969,16 @@ protocol(47).state(PLAY).from_server(0x0a, "UseBed", """
     eid             varint
     location        position_packed
 """)
-# XXX: probably wrong
 protocol(47).state(PLAY).from_server(0x0c, "SpawnPlayer", """
     eid             varint
-    uuid            string
-    name            string
-    data            varint_player_data_array
+    uuid            uuid
     x               int32
     y               int32
     z               int32
     yaw             ubyte
     pitch           ubyte
     current_item    short
-    metadata        metadata
+    metadata        metadata_1_8
 """)
 protocol(47).state(PLAY).from_server(0x0d, "CollectItem", """
     collected_eid   varint
@@ -1825,7 +2039,7 @@ protocol(47).state(PLAY).from_server(0x19, "EntityHeadLook", """
 """)
 protocol(47).state(PLAY).from_server(0x1c, "EntityMetadata", """
     eid             varint
-    metadata        metadata
+    metadata        metadata_1_8
 """)
 protocol(47).state(PLAY).from_server(0x1d, "EntityEffect", """
     eid             varint
@@ -1893,7 +2107,8 @@ protocol(47).state(PLAY).from_server(0x2a, "Particle", """
     offset_y        float
     offset_z        float
     speed           float
-    particles       int_varint_array
+    number          int
+    # data            int_varint_array
 """)
 protocol(47).state(PLAY).from_server(0x2d, "OpenWindow", """
     window_id       ubyte
@@ -1901,6 +2116,15 @@ protocol(47).state(PLAY).from_server(0x2d, "OpenWindow", """
     title           json
     slot_count      ubyte
     eid             int                 self.type == "EntityHorse"
+""")
+protocol(47).state(PLAY).from_server(0x2f, "SetSlot", """
+    window_id       ubyte
+    slot            short
+    item            slot_1_8
+""")
+protocol(47).state(PLAY).from_server(0x30, "WindowItem", """
+    window_id       ubyte
+    slots           slot_array_1_8
 """)
 protocol(47).state(PLAY).from_server(0x33, "UpdateSign", """
     location        position_packed
@@ -1913,16 +2137,16 @@ protocol(47).state(PLAY).from_server(0x34, "Maps", """
     map_id          varint
     scale           byte
     icons           map_icons
-    columns         byte
-    rows            byte                self.columns > 0
-    x               byte                self.columns > 0
-    y               byte                self.columns > 0
+    columns         ubyte
+    rows            ubyte               self.columns > 0
+    x               ubyte               self.columns > 0
+    y               ubyte               self.columns > 0
     data            varint_byte_array   self.columns > 0
 """)
 protocol(47).state(PLAY).from_server(0x35, "UpdateBlockEntity", """
     location        position_packed
     action          ubyte
-    nbt             short_byte_array
+    nbt             nbt
 """)
 protocol(47).state(PLAY).from_server(0x36, "SignEditorOpen", """
     location        position_packed
@@ -1952,6 +2176,10 @@ protocol(47).state(PLAY).from_server(0x3e, "Teams", """
     named_tag_visible   string              self.mode in (0, 2)
     color               byte                self.mode in (0, 2) 
     players             varint_string_array self.mode in (0, 3, 4)
+""")
+protocol(47).state(PLAY).from_server(0x3f, "PluginMessage", """
+    channel         string
+    data            varint_byte_array
 """)
 protocol(47).state(PLAY).from_server(0x41, "ServerDifficulty", """
     difficulty      ubyte
@@ -2070,6 +2298,10 @@ protocol(47).state(PLAY).from_client(0x15, "ClientSettings", """
 """)
 protocol(47).state(PLAY).from_client(0x16, "ClientStatus", """
     action_id       ubyte
+""")
+protocol(47).state(PLAY).from_client(0x17, "PluginMessage", """
+    channel         string
+    data            varint_byte_array
 """)
 protocol(47).state(PLAY).from_client(0x18, "Spectate", """
     target_player   string
