@@ -32,15 +32,15 @@ import gevent.socket
 
 import fastmc.proto
 
-def pinger(sock, host, port):
-    protocol_version = 0
+protocol = fastmc.proto.protocol(0)
 
+def pinger(sock, host, port):
     sock = fastmc.proto.MinecraftSocket(sock)
     in_buf = fastmc.proto.ReadBuffer()
-    reader, writer = fastmc.proto.Endpoint.client_pair(protocol_version)
+    reader, writer = fastmc.proto.Endpoint.client_pair(protocol.version)
 
     out_buf = fastmc.proto.WriteBuffer()
-    writer.write(out_buf, 0x00, 
+    writer.write(out_buf, protocol.HandshakeServerboundHandshake.id,
         version = writer.protocol.version,
         addr = host,
         port = port,
@@ -48,7 +48,7 @@ def pinger(sock, host, port):
     )
     reader.switch_state(fastmc.proto.STATUS)
     writer.switch_state(fastmc.proto.STATUS)
-    writer.write(out_buf, 0x00)
+    writer.write(out_buf, protocol.StatusServerboundRequest.id)
     sock.send(out_buf)
 
     while 1:
@@ -62,15 +62,15 @@ def pinger(sock, host, port):
             if pkt is None:
                 break
 
-            if pkt.id == 0x00:
+            if pkt.id == protocol.StatusClientboundResponse.id:
                 out_buf = fastmc.proto.WriteBuffer()
-                writer.write(out_buf, 0x01, 
+                writer.write(out_buf, protocol.StatusServerboundPing.id,
                     time = int(time.time() * 1000)
                 )
                 sock.send(out_buf)
 
                 pprint.pprint(pkt.response)
-            elif pkt.id == 0x01:
+            elif pkt.id == protocol.StatusClientboundPing.id:
                 now = int(time.time() * 1000)
                 print "%d ms ping" % (now - pkt.time)
                 return
