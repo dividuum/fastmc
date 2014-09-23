@@ -28,6 +28,7 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import re
+import os
 import logging
 
 from array import array
@@ -39,11 +40,9 @@ from simplejson import loads as json_loads, dumps as json_dumps
 
 log = logging.getLogger(__name__)
 
-OPTIMIZE = True
-# OPTIMIZE = False
-
-DEBUG_PKTS = False
-# DEBUG_PKTS = True
+OPTIMIZE = not bool(os.getenv("FASTMC_NO_OPTIMIZE"))
+DEBUG_PARSER = bool(os.getenv("FASTMC_DEBUG_PARSER"))
+DEBUG_PACKET = bool(os.getenv("FASTMC_DEBUG_PACKET"))
 
 class ReadBuffer(object):
     __slots__ = [
@@ -1031,7 +1030,7 @@ def make_packet_type(protocol_version, pkt_id, pkt_name, desc):
             else:
                 code.add("self.%s = read_%s(b)" % (name, parser))
 
-    if DEBUG_PKTS:
+    if DEBUG_PACKET:
         code.add("remaining = len(b.read())")
         code.add("if remaining:")
         code.add("  print 'WARNING: %d unread bytes in 0x%02x' % (remaining, self.id)")
@@ -1088,8 +1087,8 @@ def make_packet_type(protocol_version, pkt_id, pkt_name, desc):
         code.add("out.append('  %s: %%r (%s)' %% (self.%s,))" % (name, parser, name))
     code.add("return '\\n'.join(out)")
 
-    if DEBUG_PKTS:
-        print "-------------------------"
+    if DEBUG_PARSER:
+        print "--[ %s / protocol version %d ]-----------------------" % (pkt_name, protocol_version)
         print "\n".join("%3d %s" % (num+1, line) 
             for num, line in enumerate(code.get().split("\n")))
         print
