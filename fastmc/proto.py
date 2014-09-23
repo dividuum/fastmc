@@ -1176,11 +1176,11 @@ class _State(object):
 
     @property
     def from_server(self):
-        return _Side(self._protocol, self._state, 0).__call__
+        return _Side(self._protocol, self._state, CLIENTBOUND).__call__
 
     @property
     def from_client(self):
-        return _Side(self._protocol, self._state, 1).__call__
+        return _Side(self._protocol, self._state, SERVERBOUND).__call__
 
 
 class _Side(object):
