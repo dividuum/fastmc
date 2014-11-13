@@ -2276,6 +2276,14 @@ protocol(47).state(PLAY).from_client(0x0c, "SteerVehicle", """
     forward         float
     flags           ubyte
 """)
+protocol(47).state(PLAY).from_client(0x0e, "ClickWindow", """
+    window_id       ubyte
+    slot            short
+    button          byte
+    action_num      short
+    mode            byte
+    clicked_item    slot_1_8
+""")
 protocol(47).state(PLAY).from_client(0x12, "UpdateSign", """
     location        position_packed
     line1           json
