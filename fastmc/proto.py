@@ -751,11 +751,11 @@ def write_list_actions(b, actions):
             has_display_name = player.display_name is not None
             write_bool(b, has_display_name)
             if has_display_name:
-                write_string(b, player.display_name)
+                write_json(b, player.display_name)
         elif actions.action == LIST_ACTION_UPDATE_GAMEMODE:
-            write_varint(player.game_mode)
+            write_varint(b, player.game_mode)
         elif actions.action == LIST_ACTION_UPDATE_LATENCY:
-            write_varint(player.ping)
+            write_varint(b, player.ping)
         elif actions.action == LIST_ACTION_UPDATE_DISPLAY_NAME:
             has_display_name = player.display_name is not None
             write_bool(b, has_display_name)
