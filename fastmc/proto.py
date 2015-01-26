@@ -2268,7 +2268,7 @@ protocol(47).state(PLAY).from_client(0x07, "PlayerDigging", """
 protocol(47).state(PLAY).from_client(0x08, "BlockPlacement", """
     location        position_packed
     direction       byte
-    held_item       slot
+    held_item       slot_1_8
     cursor_x        byte
     cursor_y        byte
     cursor_z        byte
