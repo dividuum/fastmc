@@ -644,7 +644,6 @@ def write_map_chunk_bulk_14w28a(b, bulk):
         write_int(b, chunk.x)
         write_int(b, chunk.z)
         write_ushort(b, chunk.primary_bitmap)
-    write_varint(b, len(bulk.data))
     b.write(bulk.data)
 
 MapIcon = namedtuple("MapIcon", "direction type x y")
