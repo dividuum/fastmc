@@ -1047,8 +1047,7 @@ def make_packet_type(protocol_version, pkt_id, pkt_name, desc):
 
     if DEBUG_PACKET:
         code.add("remaining = len(b.read())")
-        code.add("if remaining:")
-        code.add("  print 'WARNING: %d unread bytes in 0x%02x' % (remaining, self.id)")
+        code.add("assert not remaining, 'WARNING: %d unread bytes in 0x%02x' % (remaining, self.id)")
         # code.add("  assert False")
     code.add("return self")
     code.dedent()
@@ -1108,7 +1107,7 @@ def make_packet_type(protocol_version, pkt_id, pkt_name, desc):
             for num, line in enumerate(code.get().split("\n")))
         print
 
-    compiled = compile(code.get(), "%s:%s@%d" % (__file__, pkt_name, protocol_version), 'exec')
+    compiled = compile(code.get(), "%s:%s(0x%x)@%d" % (__file__, pkt_name, pkt_id, protocol_version), 'exec')
 
     env = {
         'Struct': Struct
