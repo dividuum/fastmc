@@ -866,14 +866,14 @@ def write_nbt(b, nbt):
     }
     write_nbt_tag(b, nbt.name, nbt.root)
 
-def read_raw(b, expect_compressed=False):
+def read_raw(b, compression_threshold):
     ss = b.snapshot()
     pkt_size = read_varint(b)
     if pkt_size is None:
         b.restore(ss)
         return None
 
-    if expect_compressed:
+    if compression_threshold is not None:
         data_length = read_varint(b)
         if data_length is None:
             b.restore(ss)
@@ -886,9 +886,16 @@ def read_raw(b, expect_compressed=False):
             return None
 
         if data_length == 0: # uncompressed
+            if len(data) >= compression_threshold:
+                raise ValueError("packet is uncompressed despite being larger than %d" % compression_threshold)
             return StringIO(data)
         else:
-            return StringIO(data.decode('zlib'))
+            decompressed = data.decode('zlib')
+            if len(decompressed) != data_length:
+                raise ValueError("decompressed length doesn't match server values")
+            if len(decompressed) < compression_threshold:
+                raise ValueError("packet was compressed but data was smaller than %d" % compression_threshold)
+            return StringIO(decompressed)
     else:
         data = b.read(pkt_size)
         if len(data) != pkt_size:
@@ -896,7 +903,7 @@ def read_raw(b, expect_compressed=False):
             return None
         return StringIO(data)
 
-def write_packet(b, pkt, compression_threshold=None):
+def write_packet(b, pkt, compression_threshold):
     raw = StringIO()
     write_varint(raw, pkt.id)
     pkt.emit(raw)
@@ -1246,20 +1253,19 @@ class Endpoint(object):
         log.debug("endpoint switch to state %d" % (self._state))
 
     def read(self, buf):
-        raw = read_raw(buf, expect_compressed=self._compression_threshold is not None)
+        raw = read_raw(buf, self._compression_threshold)
         if raw is None:
             return None, None
         pkt_id = read_varint(raw)
-        log.debug("received pkt id %d in state %d" % (pkt_id, self._state))
+        # log.debug("received pkt id %d in state %d" % (pkt_id, self._state))
         return self._state_packets[pkt_id].parse(raw), raw
 
     def write(self, buf, pkt_id, **data):
-        log.debug("sending pkt id %d %r" % (pkt_id, data))
-        write_packet(
-            buf, 
-            self._state_packets[pkt_id].create(**data),
-            compression_threshold = self._compression_threshold,
-        )
+        # log.debug("sending pkt id %d %r" % (pkt_id, data))
+        self.write_pkt(buf, self._state_packets[pkt_id].create(**data))
+
+    def write_pkt(self, buf, pkt):
+        write_packet(buf, pkt, self._compression_threshold)
 
 class MinecraftSocket(object):
     def __init__(self, sock):
