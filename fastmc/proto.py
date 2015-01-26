@@ -169,6 +169,14 @@ def write_string(b, string):
     write_varint(b, len(encoded))
     b.write(encoded)
 
+def read_bytes_exhaustive(b):
+    # ugly hack for plugin message in protocol version 47:
+    # The value doesn't have a size prefix, so you have to
+    # to read all remaining bytes here. *barf*
+    return b.read(10000000000)
+def write_bytes_exhaustive(b, string):
+    b.write(string)
+
 def read_json(b):
     return json_loads(read_string(b))
 def write_json(b, value):
@@ -2107,7 +2115,7 @@ protocol(47).state(PLAY).from_server(0x2a, "Particle", """
     offset_z        float
     speed           float
     number          int
-    # data            int_varint_array
+    data            bytes_exhaustive    self.particle_id in (36, 37, 38)
 """)
 protocol(47).state(PLAY).from_server(0x2d, "OpenWindow", """
     window_id       ubyte
@@ -2178,7 +2186,7 @@ protocol(47).state(PLAY).from_server(0x3e, "Teams", """
 """)
 protocol(47).state(PLAY).from_server(0x3f, "PluginMessage", """
     channel         string
-    data            varint_byte_array
+    data            bytes_exhaustive
 """)
 protocol(47).state(PLAY).from_server(0x41, "ServerDifficulty", """
     difficulty      ubyte
