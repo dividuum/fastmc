@@ -363,7 +363,7 @@ def write_slot_1_8(b, slot):
     if slot.nbt is None:
         write_byte(b, 0)
     else:
-        write_nbt(b, '', slot.nbt)
+        write_nbt(b, NBT('', slot.nbt))
 
 read_slot_array_1_8 = make_array_reader(read_short, read_slot_1_8)
 write_slot_array_1_8 = make_array_writer(write_short, write_slot_1_8)
@@ -780,6 +780,7 @@ class NbtTag(namedtuple('NbtTag', 'tag_type value')):
     COMPOUND = 10
     INT_ARRAY = 11
 NbtList = namedtuple('NbtList', 'tag_type values')
+NBT = namedtuple('NBT', 'name root')
 
 def read_nbt(b):
     def read_nbt_byte_array(b):
@@ -826,9 +827,9 @@ def read_nbt(b):
     }
     name, nbt_tag = read_nbt_tag(b)
     # assert nbt_tag.tag_type == NbtTag.COMPOUND
-    return name, nbt_tag
+    return NBT(name, nbt_tag)
 
-def write_nbt(b, name, value):
+def write_nbt(b, nbt):
     def write_nbt_byte_array(b, values):
         write_int(b, len(values))
         b.write(pack(">%db" % len(values), *values))
@@ -863,7 +864,7 @@ def write_nbt(b, name, value):
         NbtTag.COMPOUND: write_nbt_compound,
         NbtTag.INT_ARRAY: write_nbt_int_array,
     }
-    write_nbt_tag(b, name, value) 
+    write_nbt_tag(b, nbt.name, nbt.root)
 
 def read_raw(b, expect_compressed=False):
     ss = b.snapshot()
