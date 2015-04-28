@@ -661,9 +661,9 @@ def read_map_icons(b):
 def write_map_icons(b, icons):
     write_varint(b, len(icons))
     for icon in icons:
-        write_byte(icon.direction << 4 | icon.type)
-        write_byte(icon.x)
-        write_byte(icon.y)
+        write_byte(b, icon.direction << 4 | icon.type)
+        write_byte(b, icon.x)
+        write_byte(b, icon.y)
 
 PlayerListActions = namedtuple("PlayerListAction", "action players")
 LIST_ACTION_ADD_PLAYER = 0
@@ -2175,7 +2175,7 @@ protocol(47).state(PLAY).from_server(0x3b, "ScoreboardObjective", """
 protocol(47).state(PLAY).from_server(0x3c, "UpdateScore", """
     name            string
     remove          byte
-    score_name      string              self.remove != 1
+    score_name      string
     value           varint              self.remove != 1
 """)
 protocol(47).state(PLAY).from_server(0x3e, "Teams", """
