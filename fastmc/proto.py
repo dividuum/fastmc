@@ -760,7 +760,7 @@ def write_list_actions(b, actions):
             has_display_name = player.display_name is not None
             write_bool(b, has_display_name)
             if has_display_name:
-                write_string(b, player.display_name)
+                write_json(b, player.display_name)
         elif actions.action == LIST_ACTION_REMOVE_PLAYER:
             pass
         else:
@@ -2295,6 +2295,10 @@ protocol(47).state(PLAY).from_client(0x0e, "ClickWindow", """
     button          byte
     action_num      short
     mode            byte
+    clicked_item    slot_1_8
+""")
+protocol(47).state(PLAY).from_client(0x10, "CreativeInventoryAction", """
+    slot            short
     clicked_item    slot_1_8
 """)
 protocol(47).state(PLAY).from_client(0x12, "UpdateSign", """
