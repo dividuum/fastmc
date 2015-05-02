@@ -1241,6 +1241,10 @@ class Endpoint(object):
     def state(self):
         return self._state
 
+    @property
+    def compression_threshold(self):
+        return self._compression_threshold
+
     def set_compression_threshold(self, compression_threshold):
         if compression_threshold == -1:
             compression_threshold = None
