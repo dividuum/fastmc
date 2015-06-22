@@ -852,6 +852,7 @@ def write_nbt(b, nbt):
         write_short_string(b, name)
         TAG_TYPES[nbt_tag.tag_type](b, nbt_tag.value)
     TAG_TYPES = {
+        NbtTag.END: lambda b: None,
         NbtTag.BYTE: write_byte,
         NbtTag.SHORT: write_short,
         NbtTag.INT: write_int,
